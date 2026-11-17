@@ -1,266 +1,281 @@
 // HUD: health, cash, wanted stars, weapon, clock, objective banner,
-// speedometer and the minimap.
-import { WORLD, PALETTE } from './config.js';
-import { fmtCash, fmtClock, clamp } from './random.js';
-import { objectiveText } from './missions.js';
-import { wantedStars } from './entities.js';
+// speedometer, minimap, briefing cards and prompts. Panels are 0.92 opaque
+// so map labels never show through the chrome.
+import { VIEW_H, VIEW_W, WORLD_H, WORLD_W } from './config.js';
+import { districtAt } from './city.js';
+import { waypoint } from './missions.js';
 
-function star(ctx, x, y, r, filled, flashing) {
-  ctx.save();
-  ctx.translate(x, y);
+const PANEL = 'rgba(12, 16, 22, 0.92)';
+
+function panel(ctx, x, y, w, h) {
+  ctx.fillStyle = PANEL;
   ctx.beginPath();
-  for (let i = 0; i < 10; i++) {
-    const rr = i % 2 === 0 ? r : r * 0.45;
-    const a = -Math.PI / 2 + (i * Math.PI) / 5;
-    ctx[i === 0 ? 'moveTo' : 'lineTo'](Math.cos(a) * rr, Math.sin(a) * rr);
-  }
-  ctx.closePath();
-  ctx.fillStyle = filled ? (flashing ? '#ff4444' : '#ffd24d') : 'rgba(0,0,0,0.45)';
+  ctx.roundRect(x, y, w, h, 8);
   ctx.fill();
-  ctx.strokeStyle = 'rgba(0,0,0,0.7)';
-  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  ctx.lineWidth = 1;
   ctx.stroke();
-  ctx.restore();
 }
 
-export function drawHUD(ctx, G) {
-  const p = G.player;
-  const stars = wantedStars(G.heat);
-  const flashing = stars > 0 && Math.floor(G.time * 2) % 2 === 0;
+function fmtClock(hours) {
+  const h = Math.floor(hours) % 24;
+  const m = Math.floor((hours % 1) * 60);
+  const hh = String(h).padStart(2, '0');
+  const mm = String(m).padStart(2, '0');
+  const day = Math.floor(hours / 24) + 1;
+  return `Day ${day} ${hh}:${mm}`;
+}
+
+export function drawHUD(ctx, state) {
+  const p = state.player;
+  ctx.save();
+  ctx.textBaseline = 'alphabetic';
 
   // Top-left: health + cash.
-  ctx.save();
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  ctx.font = 'bold 20px system-ui, sans-serif';
-  ctx.fillStyle = 'rgba(0,0,0,0.92)';
-  roundRect(ctx, 12, 12, 250, 64, 10);
-  ctx.fill();
-  // Health bar.
-  ctx.fillStyle = '#222';
-  ctx.fillRect(24, 24, 150, 14);
-  ctx.fillStyle = p.hp > 50 ? '#3ec94a' : p.hp > 25 ? '#e8a13a' : '#e03a3a';
-  ctx.fillRect(24, 24, 150 * clamp(p.hp / p.maxHp, 0, 1), 14);
-  ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-  ctx.strokeRect(24, 24, 150, 14);
+  panel(ctx, 12, 12, 250, 64);
   ctx.fillStyle = '#fff';
-  ctx.fillText('HP ' + Math.ceil(p.hp), 182, 31);
-  ctx.fillStyle = '#7dff8a';
-  ctx.font = 'bold 22px system-ui, sans-serif';
-  ctx.fillText(fmtCash(p.cash), 24, 60);
+  ctx.font = 'bold 13px system-ui, sans-serif';
+  ctx.fillText('ROOK CALLOWAY', 24, 32);
+  ctx.fillStyle = '#222';
+  ctx.fillRect(24, 40, 180, 12);
+  const hpFrac = Math.max(0, p.hp / 100);
+  ctx.fillStyle = hpFrac > 0.5 ? '#37c24a' : hpFrac > 0.25 ? '#e8a020' : '#d9382b';
+  ctx.fillRect(24, 40, 180 * hpFrac, 12);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 14px system-ui, sans-serif';
+  ctx.fillText(`$${p.cash.toLocaleString('en-US')}`, 212, 52);
+
+  // Top-centre: wanted stars (flashing at 3+).
+  const stars = state.wanted.stars;
+  panel(ctx, VIEW_W / 2 - 90, 12, 180, 40);
+  ctx.font = '22px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  for (let i = 0; i < 5; i++) {
+    const on = i < stars;
+    const flash = stars >= 3 && Math.floor(state.time * 4) % 2 === 0;
+    ctx.fillStyle = on ? (flash ? '#ff5a3c' : '#ffd23c') : 'rgba(255,255,255,0.22)';
+    ctx.fillText('★', VIEW_W / 2 - 64 + i * 32, 40);
+  }
+  ctx.textAlign = 'left';
+
+  // Top-centre below stars: clock + district.
+  panel(ctx, VIEW_W / 2 - 110, 58, 220, 30);
   ctx.fillStyle = '#fff';
   ctx.font = '13px system-ui, sans-serif';
-  ctx.fillText('Packages ' + G.packagesCollected + '/10', 150, 60);
-
-  // Wanted stars, top-centre-left.
-  for (let i = 0; i < 5; i++) {
-    star(ctx, 300 + i * 30, 34, 12, i < stars, flashing);
-  }
-
-  // Top-right: clock + district.
-  ctx.textAlign = 'right';
-  ctx.fillStyle = 'rgba(0,0,0,0.92)';
-  roundRect(ctx, 1010, 12, 258, 44, 10);
-  ctx.fill();
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 20px system-ui, sans-serif';
-  ctx.fillText(fmtClock(G.clock), 1256, 28);
-  ctx.font = '14px system-ui, sans-serif';
-  ctx.fillStyle = '#ffd24d';
-  const district = p.x < 1200 ? 'Harbor' : p.x < 2640 ? 'Downtown' : 'Palms';
-  ctx.fillText('Solmar — ' + district, 1256, 48);
-
-  // Objective banner.
-  const obj = objectiveText(G);
-  if (obj) {
-    ctx.textAlign = 'center';
-    ctx.font = 'bold 17px system-ui, sans-serif';
-    const w = ctx.measureText(obj).width + 36;
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    roundRect(ctx, 640 - w / 2, 70, w, 34, 8);
-    ctx.fill();
-    ctx.fillStyle = '#ffd24d';
-    ctx.fillText(obj, 640, 88);
-  }
-
-  // Bottom-left: weapon + ammo, or speedometer while driving.
+  ctx.textAlign = 'center';
+  const district = districtAt(p.x, p.y);
+  const night = state.clock < 6 || state.clock >= 20;
+  ctx.fillText(`${fmtClock(state.clock)}  ${night ? '☾' : '☀'}  ${district.toUpperCase()}`, VIEW_W / 2, 78);
   ctx.textAlign = 'left';
-  ctx.fillStyle = 'rgba(0,0,0,0.92)';
-  roundRect(ctx, 12, 648, 220, 60, 10);
-  ctx.fill();
-  const wname = p.weapon === 'fists' ? 'Fists' : p.weapon === 'pistol' ? 'Pistol' : 'SMG';
+
+  // Objective banner under the clock.
+  const obj = state.objective;
+  if (obj) {
+    ctx.font = 'bold 14px system-ui, sans-serif';
+    const w = Math.min(560, ctx.measureText(obj).width + 32);
+    panel(ctx, VIEW_W / 2 - w / 2, 94, w, 32);
+    ctx.fillStyle = '#ffd23c';
+    ctx.textAlign = 'center';
+    ctx.fillText(obj, VIEW_W / 2, 115);
+    ctx.textAlign = 'left';
+  }
+
+  // Bottom-left: weapon + ammo.
+  panel(ctx, 12, VIEW_H - 64, 210, 52);
   ctx.fillStyle = '#fff';
-  ctx.font = 'bold 18px system-ui, sans-serif';
-  ctx.fillText(wname, 24, 668);
-  ctx.font = '15px system-ui, sans-serif';
-  ctx.fillStyle = '#cfe8ff';
-  if (p.weapon === 'fists') ctx.fillText('Space to punch · E to enter car', 24, 692);
-  else ctx.fillText('Ammo ' + (p.ammo[p.weapon] ?? 0) + ' · R reload · 1/2/3 switch', 24, 692);
+  ctx.font = 'bold 15px system-ui, sans-serif';
+  const wname = p.weapon === 'fists' ? 'Fists' : p.weapon === 'pistol' ? 'Pistol' : 'SMG';
+  ctx.fillText(wname, 24, VIEW_H - 38);
+  ctx.font = '13px system-ui, sans-serif';
+  ctx.fillStyle = '#c8c8c8';
+  if (p.weapon === 'fists') ctx.fillText('Space to punch', 24, VIEW_H - 20);
+  else ctx.fillText(`${p.mag[p.weapon]} / ${p.ammo[p.weapon]}  —  R reload`, 24, VIEW_H - 20);
+
+  // Bottom-right: speedometer while driving.
   if (p.inCar) {
-    ctx.fillStyle = 'rgba(0,0,0,0.92)';
-    roundRect(ctx, 244, 648, 130, 60, 10);
-    ctx.fill();
+    panel(ctx, VIEW_W - 172, VIEW_H - 64, 160, 52);
     ctx.fillStyle = '#fff';
-    ctx.font = 'bold 24px system-ui, sans-serif';
-    ctx.fillText(Math.round(Math.abs(p.speed) * 0.36) + ' km/h', 256, 672);
-    ctx.font = '13px system-ui, sans-serif';
-    ctx.fillStyle = '#ff9a9a';
-    ctx.fillText('Car HP ' + Math.max(0, Math.ceil(p.inCar.hp)), 256, 694);
+    ctx.font = 'bold 22px system-ui, sans-serif';
+    ctx.textAlign = 'right';
+    const mph = Math.round(Math.abs(p.inCar.speed) * 0.09);
+    ctx.fillText(`${mph}`, VIEW_W - 56, VIEW_H - 30);
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillStyle = '#c8c8c8';
+    ctx.fillText('MPH', VIEW_W - 24, VIEW_H - 30);
+    ctx.textAlign = 'left';
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillStyle = p.inCar.health < 45 ? '#ff5a3c' : '#c8c8c8';
+    ctx.fillText(p.inCar.label, VIEW_W - 160, VIEW_H - 20);
   }
 
-  // Toast message.
-  if (G.messageTimer > 0 && G.message) {
-    ctx.textAlign = 'center';
-    ctx.font = 'bold 18px system-ui, sans-serif';
-    const w = ctx.measureText(G.message).width + 30;
-    ctx.fillStyle = 'rgba(0,0,0,0.65)';
-    roundRect(ctx, 640 - w / 2, 620, w, 32, 8);
-    ctx.fill();
+  // Minimap (top-right), north-up, whole city.
+  drawMinimap(ctx, state);
+
+  // Context prompt, bottom-centre.
+  if (state.prompt) {
+    ctx.font = 'bold 14px system-ui, sans-serif';
+    const w = ctx.measureText(state.prompt).width + 28;
+    panel(ctx, VIEW_W / 2 - w / 2, VIEW_H - 108, w, 30);
     ctx.fillStyle = '#fff';
-    ctx.fillText(G.message, 640, 637);
+    ctx.textAlign = 'center';
+    ctx.fillText(state.prompt, VIEW_W / 2, VIEW_H - 88);
+    ctx.textAlign = 'left';
   }
 
-  // Mission intro card.
-  if (G.missionCard && G.missionCard.timer > 0) {
-    ctx.save();
+  // Flash message (pickups, mission results).
+  if (state.hudFlash && state.hudFlash.t > 0) {
+    ctx.font = 'bold 16px system-ui, sans-serif';
+    const w = ctx.measureText(state.hudFlash.text).width + 28;
+    ctx.globalAlpha = Math.min(1, state.hudFlash.t);
+    panel(ctx, VIEW_W / 2 - w / 2, 140, w, 32);
+    ctx.fillStyle = '#7dff8a';
     ctx.textAlign = 'center';
-    ctx.fillStyle = 'rgba(0,0,0,0.78)';
-    roundRect(ctx, 340, 200, 600, 190, 14);
-    ctx.fill();
-    ctx.strokeStyle = '#ffd24d';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.fillStyle = '#ffd24d';
-    ctx.font = 'bold 15px system-ui, sans-serif';
-    ctx.fillText(G.missionCard.act.toUpperCase(), 640, 232);
+    ctx.fillText(state.hudFlash.text, VIEW_W / 2, 161);
+    ctx.textAlign = 'left';
+    ctx.globalAlpha = 1;
+  }
+
+  // Mission briefing card (world frozen while it shows).
+  if (state.mission.briefingT > 0 && state.mission.active) {
+    const m = state.mission;
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+    panel(ctx, VIEW_W / 2 - 300, VIEW_H / 2 - 110, 600, 220);
+    ctx.fillStyle = '#ffd23c';
+    ctx.font = 'bold 13px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`MISSION ${m.idx + 1} OF 8`, VIEW_W / 2, VIEW_H / 2 - 74);
     ctx.fillStyle = '#fff';
-    ctx.font = 'bold 34px system-ui, sans-serif';
-    ctx.fillText(G.missionCard.title, 640, 272);
-    ctx.font = '16px system-ui, sans-serif';
+    ctx.font = 'bold 30px system-ui, sans-serif';
+    const mission = state.missions[m.idx];
+    ctx.fillText(mission.title, VIEW_W / 2, VIEW_H / 2 - 36);
+    ctx.font = '15px system-ui, sans-serif';
     ctx.fillStyle = '#d8d8d8';
-    wrapText(ctx, G.missionCard.text, 640, 306, 540, 22);
-    ctx.restore();
+    wrapText(ctx, mission.brief, VIEW_W / 2, VIEW_H / 2 - 8, 540, 22);
+    ctx.fillStyle = '#ffd23c';
+    ctx.font = 'bold 15px system-ui, sans-serif';
+    ctx.fillText(`Reward  $${mission.reward.toLocaleString('en-US')}`, VIEW_W / 2, VIEW_H / 2 + 78);
+    ctx.textAlign = 'left';
   }
 
   // Damage vignette.
-  if (p.hurtFlash > 0) {
-    ctx.fillStyle = 'rgba(220,30,30,' + (p.hurtFlash * 0.5) + ')';
-    ctx.fillRect(0, 0, 1280, 720);
+  if (p.hurtT > 0) {
+    ctx.fillStyle = `rgba(200, 20, 20, ${Math.min(0.35, p.hurtT * 0.5)})`;
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H);
   }
-  // Busted warning when a cop is about to grab the player.
-  if (p.bustedTimer > 0.4 && !p.inCar) {
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#ff5555';
-    ctx.font = 'bold 26px system-ui, sans-serif';
-    ctx.fillText('BREAK FREE — A COP HAS YOU!', 640, 150);
-  }
-
-  drawMinimap(ctx, G);
   ctx.restore();
 }
 
-function wrapText(ctx, text, x, y, maxW, lineH) {
+function wrapText(ctx, text, cx, y, maxW, lineH) {
   const words = text.split(' ');
   let line = '';
   let yy = y;
-  for (const w of words) {
-    const test = line ? line + ' ' + w : w;
+  for (const word of words) {
+    const test = line ? `${line} ${word}` : word;
     if (ctx.measureText(test).width > maxW && line) {
-      ctx.fillText(line, x, yy);
-      line = w;
+      ctx.fillText(line, cx, yy);
+      line = word;
       yy += lineH;
     } else {
       line = test;
     }
   }
-  if (line) ctx.fillText(line, x, yy);
+  if (line) ctx.fillText(line, cx, yy);
 }
 
-function roundRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
-}
-
-export function drawMinimap(ctx, G) {
+export function drawMinimap(ctx, state) {
   const MW = 220;
-  const MH = 160;
-  const X = 1280 - MW - 12;
-  const Y = 720 - MH - 12;
-  const sx = MW / WORLD.W;
-  const sy = MH / WORLD.H;
+  const MH = 164;
+  const X = VIEW_W - MW - 12;
+  const Y = 12;
+  const sx = MW / WORLD_W;
+  const sy = MH / WORLD_H;
+  panel(ctx, X, Y, MW, MH);
   ctx.save();
-  ctx.fillStyle = 'rgba(0,0,0,0.6)';
-  roundRect(ctx, X - 4, Y - 4, MW + 8, MH + 8, 8);
-  ctx.fill();
   ctx.beginPath();
-  ctx.rect(X, Y, MW, MH);
+  ctx.rect(X + 2, Y + 2, MW - 4, MH - 4);
   ctx.clip();
-  // Water + beach.
-  ctx.fillStyle = '#155a94';
+  // Water + sand.
+  ctx.fillStyle = '#155a75';
   ctx.fillRect(X, Y, MW, MH);
-  ctx.fillStyle = '#4d8a4a';
-  ctx.fillRect(X, Y, WORLD.WATER_X * sx, WORLD.BEACH_Y * sy);
-  ctx.fillStyle = '#e0c078';
-  ctx.fillRect(X, Y + WORLD.BEACH_Y * sy, WORLD.WATER_X * sx, (WORLD.WATER_Y - WORLD.BEACH_Y) * sy);
+  ctx.fillStyle = '#8a7a52';
+  ctx.fillRect(X + 3480 * sx, Y, (WORLD_W - 3480) * sx, MH);
+  ctx.fillRect(X, Y + 2560 * sy, MW, (WORLD_H - 2560) * sy);
+  // Land.
+  ctx.fillStyle = '#3d4a38';
+  ctx.fillRect(X, Y, 3480 * sx, 2560 * sy);
   // Roads.
-  ctx.fillStyle = '#33363d';
-  for (const rx of WORLD.ROADS_X) ctx.fillRect(X + (rx - 66) * sx, Y, 132 * sx, MH);
-  for (const ry of WORLD.ROADS_Y) ctx.fillRect(X, Y + (ry - 66) * sy, MW, 132 * sy);
-  // Buildings.
-  ctx.fillStyle = '#555a63';
-  for (const b of G.city.buildings) {
-    ctx.fillRect(X + (b.x - b.w / 2) * sx, Y + (b.y - b.h / 2) * sy, b.w * sx, b.h * sy);
-  }
-  // Pickups (packages) as white dots.
-  ctx.fillStyle = '#fff';
-  for (const pk of G.pickups) {
-    if (pk.kind === 'package' && !pk.story) ctx.fillRect(X + pk.x * sx - 1, Y + pk.y * sy - 1, 3, 3);
-  }
-  // Waypoint.
-  if (G.waypoint) {
-    const pulse = 3 + Math.sin(G.time * 5) * 1.5;
-    ctx.fillStyle = '#ffd24d';
+  ctx.strokeStyle = '#9a9c8e';
+  ctx.lineWidth = 3;
+  for (const rx of [480, 1200, 1920, 2640, 3360]) {
     ctx.beginPath();
-    ctx.arc(X + G.waypoint.x * sx, Y + G.waypoint.y * sy, pulse, 0, Math.PI * 2);
+    ctx.moveTo(X + rx * sx, Y + 240 * sy);
+    ctx.lineTo(X + rx * sx, Y + 2560 * sy);
+    ctx.stroke();
+  }
+  for (const ry of [480, 1200, 1920, 2400]) {
+    ctx.beginPath();
+    ctx.moveTo(X + 240 * sx, Y + ry * sy);
+    ctx.lineTo(X + 3480 * sx, Y + ry * sy);
+    ctx.stroke();
+  }
+  const dot = (x, y, color, r) => {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(X + x * sx, Y + y * sy, r, 0, Math.PI * 2);
+    ctx.fill();
+  };
+  // Hidden packages.
+  for (const pkg of state.city.packages) {
+    if (!pkg.taken) dot(pkg.x, pkg.y, '#ffd23c', 2);
+  }
+  // Cars and peds.
+  for (const c of state.cars) {
+    if (c.driver === 'police') continue;
+    dot(c.x, c.y, 'rgba(220,220,220,0.7)', 2);
+  }
+  for (const ped of state.peds) dot(ped.x, ped.y, 'rgba(255,255,255,0.45)', 1.5);
+  // Taxi fare.
+  if (state.taxi.active && state.taxi.phase === 'pickup' && state.taxi.ped) {
+    dot(state.taxi.ped.x, state.taxi.ped.y, '#37c24a', 3.5);
+  }
+  // Cops flash blue/red.
+  const flashBlue = Math.floor(state.time * 3) % 2 === 0;
+  for (const c of state.cars) {
+    if (c.driver === 'police') dot(c.x, c.y, flashBlue ? '#3d7ad9' : '#d9382b', 3);
+  }
+  for (const cop of state.cops) dot(cop.x, cop.y, flashBlue ? '#3d7ad9' : '#d9382b', 3);
+  // Enemies.
+  for (const e of state.enemies) dot(e.x, e.y, '#ff4040', 3);
+  // Waypoint / mission marker: gold diamond.
+  const wp = waypoint(state);
+  if (wp) {
+    const wx = X + wp.x * sx;
+    const wy = Y + wp.y * sy;
+    const pulse = 6 + Math.sin(state.time * 5) * 2;
+    ctx.fillStyle = '#ffd23c';
+    ctx.beginPath();
+    ctx.moveTo(wx, wy - pulse);
+    ctx.lineTo(wx + pulse, wy);
+    ctx.lineTo(wx, wy + pulse);
+    ctx.lineTo(wx - pulse, wy);
+    ctx.closePath();
     ctx.fill();
   }
-  // Cars, peds, enemies, cops.
-  ctx.fillStyle = '#bbbbbb';
-  for (const c of G.cars) ctx.fillRect(X + c.x * sx - 1.5, Y + c.y * sy - 1.5, 3, 3);
-  ctx.fillStyle = '#e8e8e8';
-  for (const pd of G.peds) {
-    if (!pd.dead) ctx.fillRect(X + pd.x * sx - 1, Y + pd.y * sy - 1, 2, 2);
-  }
-  ctx.fillStyle = '#ff4444';
-  for (const e of G.enemies) {
-    if (e.hp > 0) ctx.fillRect(X + e.x * sx - 1.5, Y + e.y * sy - 1.5, 3, 3);
-  }
-  const flash = Math.floor(G.time * 3) % 2 === 0;
-  ctx.fillStyle = flash ? '#4488ff' : '#ff4444';
-  for (const c of G.cops) ctx.fillRect(X + c.x * sx - 2, Y + c.y * sy - 2, 4, 4);
-  // Player arrow.
-  const p = G.player;
+  // Player: white triangle.
+  const p = state.player;
+  ctx.fillStyle = '#fff';
   ctx.save();
   ctx.translate(X + p.x * sx, Y + p.y * sy);
   ctx.rotate(p.angle);
-  ctx.fillStyle = '#fff';
   ctx.beginPath();
-  ctx.moveTo(7, 0);
-  ctx.lineTo(-5, -5);
-  ctx.lineTo(-5, 5);
+  ctx.moveTo(6, 0);
+  ctx.lineTo(-4, -4);
+  ctx.lineTo(-4, 4);
   ctx.closePath();
   ctx.fill();
-  ctx.strokeStyle = '#000';
-  ctx.stroke();
   ctx.restore();
   ctx.restore();
-  // Border + label.
-  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(X - 4, Y - 4, MW + 8, MH + 8);
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.strokeRect(X, Y, MW, MH);
 }

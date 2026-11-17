@@ -1,91 +1,64 @@
-// Solmar Heat — tuning, palette, world constants and key bindings.
-// Everything here is original: the city of Solmar, its districts and its people
-// belong to this game alone.
-export const WORLD = {
-  W: 3840,
-  H: 2880,
-  ROAD_W: 132,
-  ROADS_X: [480, 1200, 1920, 2640, 3360],
-  ROADS_Y: [480, 1200, 1920, 2400],
-  // Water hugs the south and east edges; the beach strip sits just north of it.
-  WATER_Y: 2640,
-  WATER_X: 3600,
-  BEACH_Y: 2520,
-};
+// Solmar Heat — tuning numbers, palette, world layout and vehicle/weapon tables.
+// Everything here is original; the city, names and numbers are invented for this game.
+export const WORLD_W = 3840;
+export const WORLD_H = 2880;
+export const VIEW_W = 1280;
+export const VIEW_H = 720;
+export const STEP = 1 / 60;
+export const SAVE_KEY = 'solmarheat-save-v1';
 
-export const DISTRICTS = {
-  HARBOR: { name: 'Harbor', x0: 0, x1: 1200, tint: '#5a6b7a' },
-  DOWNTOWN: { name: 'Downtown', x0: 1200, x1: 2640, tint: '#7a6a55' },
-  PALMS: { name: 'Palms', x0: 2640, x1: 3840, tint: '#c98f4e' },
-};
+// Road grid: vertical and horizontal road centre lines, road width in world units.
+export const V_ROADS = [480, 1200, 1920, 2640, 3360];
+export const H_ROADS = [480, 1200, 1920, 2400];
+export const ROAD_W = 96;
+
+// Water hugs the south and east edges; sand sits between the beach road and the water.
+export const WATER_EAST = 3600;
+export const WATER_SOUTH = 2700;
+export const SAND_EAST = 3480;
+export const SAND_SOUTH = 2560;
 
 export const PALETTE = {
-  grass: '#4d8a4a',
-  grassDark: '#437c40',
-  sidewalk: '#b9b3a4',
-  road: '#33363d',
-  roadEdge: '#22242a',
-  lane: '#e8d44d',
-  sand: '#e0c078',
-  water: '#1f6fb2',
-  waterDeep: '#155a94',
-  plaza: '#9a938a',
-  dock: '#6b5d4f',
+  ground: '#55604f',
+  block: '#616d58',
+  sidewalk: '#9a9c8e',
+  road: '#33373b',
+  roadEdge: '#c8c9bd',
+  dash: '#e8c33c',
+  sand: '#d9c08a',
+  water: '#1d6d8c',
+  waterDeep: '#155a75',
+  pier: '#8a6b46',
+  buildingOutline: '#20242a',
+  grass: '#4d7a44',
 };
 
+// Five drivable models, each with its own feel.
 export const CAR_MODELS = {
-  sedan: { name: 'Sedan', top: 330, accel: 210, brake: 420, grip: 2.6, hp: 100, len: 44, wid: 22, colors: ['#c23b2e', '#2e6fc2', '#d8d8d8', '#3a3f46'] },
-  taxi: { name: 'Taxi', top: 320, accel: 200, brake: 420, grip: 2.6, hp: 100, len: 44, wid: 22, colors: ['#f2b705'] },
-  coupe: { name: 'Coupe', top: 400, accel: 260, brake: 460, grip: 3.1, hp: 80, len: 42, wid: 20, colors: ['#8e2f8f', '#e05a1f', '#1fbf8f'] },
-  pickup: { name: 'Pickup', top: 300, accel: 180, brake: 380, grip: 2.3, hp: 130, len: 48, wid: 23, colors: ['#5a7a3a', '#7a4a2a'] },
-  van: { name: 'Van', top: 270, accel: 150, brake: 360, grip: 2.0, hp: 150, len: 52, wid: 24, colors: ['#d8d2c4', '#4a6a8a'] },
-  cruiser: { name: 'Cruiser', top: 380, accel: 250, brake: 480, grip: 3.0, hp: 120, len: 46, wid: 22, colors: ['#1a1d24'] },
+  sedan: { label: 'Sedan', maxSpeed: 430, accel: 270, reverse: 160, handling: 2.7, grip: 5.5, color: '#b8452f', roof: '#8e3423', len: 52, wid: 26 },
+  taxi: { label: 'Taxi', maxSpeed: 410, accel: 260, reverse: 160, handling: 2.8, grip: 5.5, color: '#e8b820', roof: '#c99a12', len: 52, wid: 26 },
+  coupe: { label: 'Coupe', maxSpeed: 540, accel: 330, reverse: 180, handling: 3.4, grip: 6.5, color: '#2f6fb8', roof: '#1f4d84', len: 50, wid: 24 },
+  pickup: { label: 'Pickup', maxSpeed: 460, accel: 290, reverse: 170, handling: 2.5, grip: 5.0, color: '#5d7a3a', roof: '#465e2b', len: 56, wid: 27 },
+  van: { label: 'Van', maxSpeed: 360, accel: 220, reverse: 140, handling: 2.1, grip: 4.5, color: '#7a7f85', roof: '#5b6065', len: 60, wid: 28 },
+  cruiser: { label: 'Cruiser', maxSpeed: 500, accel: 320, reverse: 180, handling: 3.1, grip: 6.0, color: '#1d2f4a', roof: '#12203a', len: 54, wid: 26 },
 };
 
+// Weapons: fists are free, guns need ammo. Damage is per hit.
 export const WEAPONS = {
-  fists: { name: 'Fists', damage: 12, rate: 0.35, range: 46, speed: 0, auto: false, melee: true, ammo: Infinity },
-  pistol: { name: 'Pistol', damage: 22, rate: 0.28, range: 420, speed: 900, auto: false, spread: 0.03, ammo: 'pistol' },
-  smg: { name: 'SMG', damage: 14, rate: 0.09, range: 360, speed: 1000, auto: true, spread: 0.09, ammo: 'smg' },
+  fists: { label: 'Fists', damage: 22, rate: 0.38, range: 64, speed: 0, mag: Infinity, auto: false, spread: 0 },
+  pistol: { label: 'Pistol', damage: 26, rate: 0.30, range: 560, speed: 980, mag: 12, auto: false, spread: 0.018 },
+  smg: { label: 'SMG', damage: 13, rate: 0.085, range: 480, speed: 1050, mag: 32, auto: true, spread: 0.055 },
 };
 
-export const TUNING = {
-  playerWalk: 205,
-  playerSprint: 330,
-  playerHp: 100,
-  pedSpeed: 55,
-  pedFleeSpeed: 190,
-  trafficSpeed: 150,
-  copFootSpeed: 215,
-  copCruiserSpeed: 360,
-  wantedDecay: 1.6,
-  heatPerCarTheft: 14,
-  heatPerPedHit: 18,
-  heatPerShot: 0.25, // a sustained shootout builds heat, but the cops join late, not mid-fight
-  heatPerCopKill: 30,
-  heatPerKill: 12,
-  bustedTime: 2.5,
-  dayLength: 480, // seconds of play per full day/night cycle
-  startClock: 8 * 3600 + 20 * 60, // 08:20 in the morning
-  duskClock: 18 * 3600 + 30 * 60,
-  nightClock: 20 * 3600,
-  dawnClock: 6 * 3600,
-};
+export const WANTED_MAX_HEAT = 100;
+export const HEAT_PER_STAR = 20;
+// While a story mission is running the heat never climbs past 3 stars.
+export const MISSION_HEAT_CAP = 45;
 
-export const KEYS = {
-  up: ['KeyW', 'ArrowUp'],
-  down: ['KeyS', 'ArrowDown'],
-  left: ['KeyA', 'ArrowLeft'],
-  right: ['KeyD', 'ArrowRight'],
-  sprint: ['ShiftLeft', 'ShiftRight'],
-  punch: ['Space'],
-  enterCar: ['KeyE'],
-  reload: ['KeyR'],
-  pause: ['KeyP', 'Escape'],
-  mute: ['KeyM'],
-  taxi: ['KeyT'],
-  weapon1: ['Digit1'],
-  weapon2: ['Digit2'],
-  weapon3: ['Digit3'],
-};
+export const PLAYER_WALK = 230;
+export const PLAYER_SPRINT = 350;
+export const PLAYER_HP = 100;
 
-export const MISSION_REWARDS = [300, 500, 800, 1000, 1200, 1500, 2500, 5000];
+export const MISSION_MARKER = { x: 1920, y: 480 };
+export const HOSPITAL = { x: 1200, y: 1920 };
+export const POLICE_STATION = { x: 1200, y: 480 };

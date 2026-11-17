@@ -1,91 +1,106 @@
-// Deterministic staged scenes for screenshots: each builds REAL world
-// state with the game's own systems, then the game paints it.
-// ?shot=start | drive | mission | night  (with &seed=1)
-import { TUNING } from './config.js';
-import { makeCar, spawnTrafficCar, spawnPed, burst } from './entities.js';
-import { spawnEnemy, spawnPickup } from './combat.js';
-import { startMission } from './missions.js';
+// Deterministic staged scenes for screenshots (?shot=<name>&seed=N).
+// Each builds REAL world state with the game's own systems, paints it, and
+// the boot code sets window.__shotReady. No edited or borrowed images.
+import { enterCar, makeCar, spawnPeds, spawnTraffic } from './entities.js';
+import { combat } from './combat.js';
+import { objectiveText, startMission, waypoint } from './missions.js';
 
-function parkCars(G, spots) {
-  for (const [x, y, a] of spots) {
-    const car = makeCar('sedan', x, y, a, 'none');
-    G.cars.push(car);
-  }
+function baseScene(state, clock, px, py) {
+  state.clock = clock;
+  state.player.x = px;
+  state.player.y = py;
+  state.player.hp = 100;
+  state.player.inCar = null;
+  state.camera.x = px;
+  state.camera.y = py;
+  state.cars = state.cars.filter((c) => c.driver === 'parked');
+  state.peds = [];
+  state.enemies = [];
+  state.cops = [];
+  state.bullets = [];
+  state.particles = [];
+  state.wanted.heat = 0;
+  state.wanted.stars = 0;
+  spawnTraffic(state, state.rng, 12);
+  spawnPeds(state, state.rng, 16);
 }
 
-export function stageShot(G, name) {
-  const p = G.player;
+export function stageShot(name, state) {
+  const p = state.player;
   if (name === 'start') {
     // Title screen over the city at dusk.
-    G.clock = TUNING.duskClock;
-    p.x = 1920;
-    p.y = 1140;
-    G.camera.x = 1920 - 640;
-    G.camera.y = 1140 - 360;
-    parkCars(G, [[1830, 1200, 0], [2010, 1200, Math.PI], [1920, 1290, Math.PI / 2]]);
-    spawnPed(G, 1860, 1080);
-    spawnPed(G, 1980, 1080);
-    G.screen = 'title';
-  } else if (name === 'drive') {
-    // Driving downtown in daylight, traffic around, 2 stars on the HUD.
-    G.clock = 11 * 3600;
-    const car = makeCar('coupe', 1920, 1200, 0, 'player');
-    car.color = '#8e2f8f';
-    car.speed = 260;
-    G.cars.push(car);
-    p.inCar = car;
-    p.x = car.x;
-    p.y = car.y;
-    p.angle = 0;
-    p.cash = 1240;
-    G.heat = 30;
-    G.wanted = 2;
-    for (let i = 0; i < 5; i++) spawnTrafficCar(G, 1920, 1200);
-    spawnPed(G, 1850, 1080);
-    spawnPed(G, 2100, 1320);
-    spawnPed(G, 1700, 1140);
-    G.screen = 'play';
-  } else if (name === 'mission') {
-    // Docks shootout at night: mission 3 in progress, muzzle flashes.
-    G.clock = 22 * 3600 + 30 * 60;
-    p.x = 840;
-    p.y = 2280;
-    p.angle = -Math.PI / 2;
-    p.weapon = 'smg';
-    p.ammo.smg = 90;
-    p.cash = 2480;
-    G.heat = 55;
-    G.wanted = 3;
-    startMission(G, 2);
-    G.mission.stage = 1;
-    G.mission.state.total = 5;
-    G.mission.state.kills = 0;
-    const spots = [[720, 2260], [960, 2260], [680, 2140], [1000, 2140], [840, 2320]];
-    for (const [x, y] of spots) spawnEnemy(G, x, y, 'goon');
-    spawnPickup(G, 900, 2200, 'health', 25);
-    // A burst of live fire for the frame.
-    G.bullets.push({ x: 840, y: 2240, vx: 0, vy: -900, life: 0.4, damage: 14, from: 'player' });
-    G.bullets.push({ x: 880, y: 2100, vx: 300, vy: 700, life: 0.4, damage: 8, from: 'enemy' });
-    burst(G, 840, 2250, 6, '#ffd24d', 140, 0.2);
-    burst(G, 880, 2100, 6, '#ffd24d', 140, 0.2);
-    G.screen = 'play';
-  } else if (name === 'night') {
-    // Night cruise on the beach road, headlights on, 1 star.
-    G.clock = 23 * 3600;
-    const car = makeCar('sedan', 2400, 2460, 0, 'player');
-    car.color = '#c23b2e';
-    car.speed = 220;
-    G.cars.push(car);
-    p.inCar = car;
-    p.x = car.x;
-    p.y = car.y;
-    p.angle = 0;
-    p.cash = 3120;
-    G.heat = 12;
-    G.wanted = 1;
-    for (let i = 0; i < 3; i++) spawnTrafficCar(G, 2400, 2460);
-    spawnPed(G, 2300, 2500);
-    G.screen = 'play';
+    baseScene(state, 18.4, 1920, 1200);
+    state.screen = 'title';
+    state.titleMenu = 0;
+    return { screen: 'title' };
   }
-  G.shotStaged = name;
+  if (name === 'drive') {
+    // Daylight downtown drive: Rook in a coupe, traffic, 2 stars, cruisers behind.
+    baseScene(state, 13.0, 1920, 1200);
+    const coupe = makeCar('coupe', 1920, 1200, 0, 'parked');
+    coupe.speed = 260;
+    state.cars.push(coupe);
+    enterCar(state, coupe);
+    p.cash = 2450;
+    state.wanted.heat = 40;
+    state.wanted.stars = 2;
+    for (let i = 0; i < 2; i++) {
+      const cruiser = makeCar('cruiser', 1920 - 160 - i * 120, 1200 + (i === 0 ? 26 : -26), 0, 'police');
+      cruiser.speed = 260;
+      state.cars.push(cruiser);
+    }
+    state.screen = 'play';
+    return { screen: 'play' };
+  }
+  if (name === 'mission') {
+    // Night shootout at the docks: mission 3 live, briefing already cleared.
+    baseScene(state, 22.2, 560, 2050);
+    p.weapon = 'smg';
+    p.mag.smg = 28;
+    p.ammo.smg = 120;
+    p.cash = 3800;
+    startMission(state, 2);
+    state.mission.briefingT = 0;
+    // Advance to the kill step and spawn the crew.
+    state.mission.step = 1;
+    state.stats.missionKills = 0;
+    combat.spawnGoons(state, 480, 2100, 6, { weapon: 'smg' });
+    state.mission.data.spawned = true;
+    // A few live bullets + muzzle flashes so the firefight reads in one frame.
+    for (let i = 0; i < 3; i++) {
+      const a = -0.4 + i * 0.5;
+      state.bullets.push({
+        x: p.x + Math.cos(a) * 60, y: p.y + Math.sin(a) * 60,
+        vx: Math.cos(a) * 1050, vy: Math.sin(a) * 1050,
+        life: 0.4, damage: 13, from: 'player',
+      });
+    }
+    state.muzzle = { x: p.x + 30, y: p.y, t: 0.06 };
+    state.wanted.heat = 40;
+    state.wanted.stars = 2;
+    state.objective = objectiveText(state);
+    state.waypoint = waypoint(state);
+    state.screen = 'play';
+    return { screen: 'play' };
+  }
+  if (name === 'night') {
+    // Night cruise on the beach road: headlights, palms, 1 star.
+    baseScene(state, 23.4, 2000, 2400);
+    const sedan = makeCar('sedan', 2000, 2400, 0, 'parked');
+    sedan.speed = 220;
+    state.cars.push(sedan);
+    enterCar(state, sedan);
+    p.cash = 5120;
+    state.wanted.heat = 20;
+    state.wanted.stars = 1;
+    const cruiser = makeCar('cruiser', 2000 - 260, 2400 + 26, 0, 'police');
+    cruiser.speed = 220;
+    state.cars.push(cruiser);
+    state.screen = 'play';
+    return { screen: 'play' };
+  }
+  // Unknown shot name: fall back to the title.
+  baseScene(state, 17.5, 1920, 1200);
+  state.screen = 'title';
+  return { screen: 'title' };
 }

@@ -1,437 +1,329 @@
-// Story missions (8, three acts), taxi fares and the 10 hidden packages.
-import { MISSION_REWARDS, WORLD } from './config.js';
-import { range, dist, angleTo, clamp } from './random.js';
-import { landmarkById, randomStreetPoint, randomSidewalkPoint } from './city.js';
-import { spawnEnemy, spawnPickup } from './combat.js';
-import { spawnPed, spawnCop, addHeat, nearestCar, makeCar, explodeCar } from './entities.js';
+// Story missions (8, three acts), taxi fares and the mission marker.
+// Each mission is a list of steps; the controller checks the live game state.
+import { MISSION_MARKER } from './config.js';
+import { addHeat, enterCar, makeCar, spawnSmoke } from './entities.js';
+import { roadPointNear } from './city.js';
+import { combat } from './combat.js';
 
 export const MISSIONS = [
-  { title: 'First Wheels', act: 'Act I — Coming Home', briefing: 'Rae "Rook" Calloway is back in Solmar, in debt to the fixer Marlowe. First job: steal a car and bring it to Kiki\'s garage.' },
-  { title: 'The Pickup', act: 'Act I — Coming Home', briefing: 'A package is waiting downtown. Collect it and deliver it to the Harbor warehouse — and keep your nose clean.' },
-  { title: 'Harbor Lights', act: 'Act I — Coming Home', briefing: 'The Harbor Kings are leaning on Marlowe\'s crew. Clear the warehouse at the docks. Take the SMG by the crates.' },
-  { title: 'Getaway Driver', act: 'Act II — Heat Rising', briefing: 'Marlowe needs a wheelman tonight. The cops are already on you — lose them and reach the Palms Motel before the clock runs out.' },
-  { title: 'The Informant', act: 'Act II — Heat Rising', briefing: 'A Kings driver knows where the money moves. Tail his car without being spotted, then confront him on foot.' },
-  { title: 'Boardwalk Brawl', act: 'Act II — Heat Rising', briefing: 'The Kings run the boardwalk. Take the crew down, then run their leader down on the sand.' },
-  { title: 'The Vault', act: 'Act III — All In', briefing: 'The big one: Solmar Bank. Hold the street against the police waves, then get the take to Kiki\'s garage.' },
-  { title: 'King of Solmar', act: 'Act III — All In', briefing: 'End it. Hunt the Kings convoy through the Harbor, then take the warehouse — and the King himself.' },
+  {
+    id: 1, title: 'First Wheels', reward: 400,
+    brief: 'Marlowe wants his money. Kiki can set you up — but first you need wheels. Steal a car and bring it to her garage.',
+    steps: [
+      { type: 'steal', label: 'Steal a car (walk up and press E)' },
+      { type: 'drive', x: 1560, y: 480, r: 90, label: 'Drive to Kiki\'s garage' },
+    ],
+  },
+  {
+    id: 2, title: 'The Pickup', reward: 800,
+    brief: 'A package is waiting downtown. Collect it, then run it to the Harbor docks. Patrols are out — keep it clean.',
+    steps: [
+      { type: 'goto', x: 2100, y: 1200, r: 80, label: 'Collect the package downtown' },
+      { type: 'drive', x: 480, y: 2100, r: 90, label: 'Deliver to the Harbor docks' },
+    ],
+  },
+  {
+    id: 3, title: 'Harbor Lights', reward: 1500,
+    brief: 'The Harbor Kings are moving product through warehouse 4. Clear the docks — on foot, loud if you have to.',
+    steps: [
+      { type: 'goto', x: 480, y: 2100, r: 110, label: 'Reach the docks' },
+      { type: 'kill', count: 6, spawnAt: [480, 2100], label: 'Clear the warehouse crew (0/6)' },
+    ],
+  },
+  {
+    id: 4, title: 'Getaway Driver', reward: 1800,
+    brief: 'The job went sideways and the whole precinct is on you. Lose the heat and reach the safehouse — 3 stars and counting.',
+    steps: [
+      { type: 'survive', seconds: 40, wanted: 3, label: 'Survive the heat (0s / 40s)' },
+      { type: 'drive', x: 2640, y: 480, r: 90, label: 'Reach the safehouse' },
+    ],
+  },
+  {
+    id: 5, title: 'The Informant', reward: 2000,
+    brief: 'A Harbor Kings courier is rolling through downtown. Tail him — close enough to see, far enough that he never notices — then take him down.',
+    steps: [
+      { type: 'tail', seconds: 25, label: 'Tail the courier without being spotted' },
+      { type: 'kill', count: 2, spawnAt: [1920, 1920], label: 'Confront the courier\'s crew (0/2)' },
+    ],
+  },
+  {
+    id: 6, title: 'Boardwalk Brawl', reward: 2200,
+    brief: 'The Kings own the boardwalk tonight. Walk the Palms strip and settle it — they will come to you.',
+    steps: [
+      { type: 'goto', x: 3000, y: 2400, r: 110, label: 'Reach the Palms boardwalk' },
+      { type: 'kill', count: 8, spawnAt: [3000, 2400], label: 'Beat the boardwalk crew (0/8)' },
+    ],
+  },
+  {
+    id: 7, title: 'The Vault', reward: 3000,
+    brief: 'Marlowe\'s big one: the Alderra Trust bank. Hold the lobby against the police waves, then run with the take.',
+    steps: [
+      { type: 'goto', x: 1920, y: 1200, r: 100, label: 'Reach the Alderra Trust bank' },
+      { type: 'holdout', seconds: 60, label: 'Hold the bank against the waves' },
+      { type: 'drive', x: 480, y: 480, r: 90, label: 'Escape with the take' },
+    ],
+  },
+  {
+    id: 8, title: 'King of Solmar', reward: 3500,
+    brief: 'One last debt. The Harbor Kings\' boss is running for the docks in his armored coupe. Run him off the road, then finish it at the warehouse.',
+    steps: [
+      { type: 'chase', label: 'Run the boss\'s coupe off the road' },
+      { type: 'kill', count: 6, spawnAt: [1000, 1500], label: 'Finish the Kings at the warehouse (0/6)' },
+    ],
+  },
 ];
 
-const PACKAGE_SPOTS = [
-  [480, 300], [1200, 1500], [1920, 600], [2640, 2250], [3360, 900],
-  [480, 2100], [1200, 300], [1920, 2100], [2640, 1500], [3360, 2100],
-];
+export function createMissionState() {
+  return {
+    idx: 0, active: false, step: 0, briefingT: 0, data: {},
+    completed: [], failed: false, failReason: '',
+  };
+}
 
-export function placePackages(G) {
-  for (const [x, y] of PACKAGE_SPOTS) {
-    spawnPickup(G, x, y, 'package', 0);
+export function missionMarker(state) {
+  if (state.mission.active || state.mission.idx >= MISSIONS.length) return null;
+  return MISSION_MARKER;
+}
+
+export function startMission(state, idx) {
+  const m = MISSIONS[idx];
+  if (!m) return;
+  state.mission.active = true;
+  state.mission.idx = idx;
+  state.mission.step = 0;
+  state.mission.data = {};
+  state.mission.briefingT = 5;
+  state.mission.failed = false;
+  state.stats.missionKills = 0;
+  state.audio.sting();
+  // Mission 4 opens hot; mission 8 spawns the boss car.
+  if (m.id === 4) addHeat(state, 60);
+  if (m.id === 8) {
+    const boss = makeCar('coupe', 2400, 1200, 0, 'mission');
+    boss.health = 260;
+    boss.cruise = 300;
+    boss.axis = 'h';
+    boss.road = 1200;
+    boss.dir = 1;
+    boss.target = { x: 1000, y: 1500 };
+    state.cars.push(boss);
+    state.mission.data.chaseCar = boss;
   }
 }
 
-export function startMission(G, index) {
-  const def = MISSIONS[index];
-  G.mission = { index, def, stage: 0, state: {}, failed: false, timer: 0 };
-  G.missionCard = { title: def.title, act: def.act, text: def.briefing, timer: 5 };
-  G.audio.sfx('sting');
-  // Mission-specific setup that only needs to happen once.
-  if (index === 2) {
-    // Arm the player on the approach to the warehouse, not inside it.
-    spawnPickup(G, 860, 2260, 'weapon-smg', 0);
-    spawnPickup(G, 820, 2280, 'health', 25);
-  }
-  if (index === 1) spawnPickup(G, 2040, 1200, 'weapon-pistol', 0);
-  if (index === 2) {
-    // Arm the player on the approach to the warehouse, not inside it.
-    spawnPickup(G, 860, 2260, 'weapon-smg', 0);
-    spawnPickup(G, 820, 2280, 'health', 25);
-  }
-  if (index === 5) {
-    // SMG on the boardwalk road, on the approach to the crew.
-    spawnPickup(G, 3060, 2400, 'weapon-smg', 0);
-    spawnPickup(G, 3120, 2400, 'health', 25);
-  }
-  if (index === 6) {
-    // North of the bank, on open ground — never inside the bank itself.
-    spawnPickup(G, 2280, 1380, 'health', 50);
-    spawnPickup(G, 2220, 1380, 'weapon-smg', 0);
+function completeStep(state) {
+  state.mission.step += 1;
+  state.mission.data = { ...state.mission.data, stepT: 0, spawned: false, waveT: 0, tailT: 0, spottedT: 0 };
+  state.audio.pickup();
+  if (state.mission.step >= MISSIONS[state.mission.idx].steps.length) {
+    completeMission(state);
   }
 }
 
-export function completeMission(G) {
-  const m = G.mission;
-  const reward = MISSION_REWARDS[m.index];
-  G.player.cash += reward;
-  G.stats.missionsDone++;
-  G.message = 'Mission complete — +' + '$' + reward;
-  G.messageTimer = 4;
-  G.audio.sfx('cash');
-  G.waypoint = null;
-  // A finished job shakes the heat: the next job starts clean, so a
-  // getaway's 3 stars never ambush the tail that follows it.
-  G.heat = 0;
-  G.heatLock = 0;
-  G.wanted = 0;
-  G.cops.length = 0;
-  if (m.index === 7) {
-    G.storyComplete = true;
-    G.screen = 'win';
-    return;
+function completeMission(state) {
+  const m = MISSIONS[state.mission.idx];
+  state.player.cash += m.reward;
+  state.mission.completed.push(m.id);
+  state.mission.active = false;
+  state.mission.idx += 1;
+  state.mission.data = {};
+  state.hudFlash = { text: `Mission complete: ${m.title}  +$${m.reward}`, t: 3.5 };
+  state.audio.cash();
+  state.audio.sting();
+  state.stats.missionsDone += 1;
+}
+
+export function failMission(state, reason) {
+  state.mission.active = false;
+  state.mission.failed = true;
+  state.mission.failReason = reason;
+  state.mission.data = {};
+  state.hudFlash = { text: `Mission failed: ${reason}`, t: 3.5 };
+  state.audio.fail();
+}
+
+function stepLabel(state, step) {
+  if (step.type === 'kill') {
+    const done = Math.min(step.count, state.stats.missionKills);
+    return step.label.replace(/\(\d+\/\d+\)/, `(${done}/${step.count})`);
   }
-  G.missionIndex = m.index + 1;
-  G.mission = null;
-  G.missionCard = { title: 'Next: ' + MISSIONS[G.missionIndex].title, act: MISSIONS[G.missionIndex].act, text: 'Press Enter to start the next job.', timer: 6 };
-}
-
-export function failMission(G, reason) {
-  if (!G.mission) return;
-  G.mission.failed = true;
-  G.missionFailReason = reason;
-  G.waypoint = null;
-  G.audio.sfx('fail');
-  G.enemies.length = 0;
-}
-
-export function objectiveText(G) {
-  const m = G.mission;
-  if (!m) return null;
-  const s = m.state;
-  switch (m.index) {
-    case 0: return m.stage === 0 ? 'Steal a car (E near a car)' : 'Drive to Kiki\'s Garage';
-    case 1:
-      if (m.stage === 0) return 'Go to the package downtown';
-      if (m.stage === 1) return 'Pick up the package';
-      return 'Deliver the package to the Harbor';
-    case 2: return m.stage === 0 ? 'Go to the Harbor warehouse' : 'Clear the warehouse (' + (s.kills || 0) + '/5 Kings down)';
-    case 3: return m.stage === 0 ? 'Get in a car' : 'Reach the Palms Motel — ' + Math.ceil(m.timer) + 's left';
-    case 4:
-      if (m.stage === 0) return 'Tail the sedan — stay close, not too close (' + Math.floor(s.tail || 0) + '/20s)';
-      return 'Confront the driver on foot';
-    case 5:
-      if (m.stage === 0) return 'Go to the boardwalk';
-      if (m.stage === 1) return 'Take down the crew (' + (s.kills || 0) + '/6 down)';
-      return 'Run the leader down on the sand';
-    case 6:
-      if (m.stage === 0) return 'Go to Solmar Bank';
-      if (m.stage === 1) return 'Hold the street — wave ' + (s.wave || 1) + '/3';
-      return 'Escape to Kiki\'s Garage with the take';
-    case 7:
-      if (m.stage === 0) return 'Destroy the Kings convoy (' + (s.kills || 0) + '/3 cars)';
-      return 'Take the warehouse — finish the King (' + (s.kills || 0) + '/9 down)';
-    default: return '';
+  if (step.type === 'survive') {
+    const t = Math.floor(state.mission.data.stepT || 0);
+    return step.label.replace(/\(\d+s \/ \d+s\)/, `(${t}s / ${step.seconds}s)`);
   }
+  return step.label;
 }
 
-function setWaypoint(G, x, y, label) {
-  G.waypoint = { x, y, label };
+export function objectiveText(state) {
+  if (!state.mission.active) {
+    if (state.mission.idx < MISSIONS.length) return `Next job: ${MISSIONS[state.mission.idx].title} — reach the gold M`;
+    return 'All missions complete. Solmar is yours, Rook.';
+  }
+  const m = MISSIONS[state.mission.idx];
+  const step = m.steps[state.mission.step];
+  if (!step) return m.title;
+  return `${m.title}: ${stepLabel(state, step)}`;
 }
 
-function garagePoint(G) {
-  const g = landmarkById(G.city, 'garage');
-  return { x: g.x, y: g.y + 130 };
+export function waypoint(state) {
+  if (!state.mission.active) return missionMarker(state);
+  const m = MISSIONS[state.mission.idx];
+  const step = m.steps[state.mission.step];
+  if (!step) return null;
+  if (step.type === 'tail' && state.mission.data.tailCar) {
+    return { x: state.mission.data.tailCar.x, y: state.mission.data.tailCar.y, tail: true };
+  }
+  if (step.type === 'chase' && state.mission.data.chaseCar) {
+    return { x: state.mission.data.chaseCar.x, y: state.mission.data.chaseCar.y, chase: true };
+  }
+  if (step.x !== undefined) return { x: step.x, y: step.y };
+  if (step.spawnAt) return { x: step.spawnAt[0], y: step.spawnAt[1] };
+  return null;
 }
 
-export function updateMission(G, dt) {
-  const m = G.mission;
-  if (!m || m.failed) return;
-  const p = G.player;
-  const s = m.state;
+function spawnTailCar(state) {
+  const car = makeCar('sedan', 2100, 1200, 0, 'mission');
+  car.axis = 'h';
+  car.road = 1200;
+  car.dir = 1;
+  car.cruise = 150;
+  car.speed = 150;
+  state.cars.push(car);
+  state.mission.data.tailCar = car;
+  return car;
+}
 
-  switch (m.index) {
-    case 0: {
-      if (m.stage === 0) {
-        setWaypoint(G, p.x, p.y, 'Steal a car');
-        G.waypoint = null;
-        if (p.inCar) m.stage = 1;
+function driveTailCar(state, car, dt) {
+  // The courier cruises the downtown grid; he turns at random intersections.
+  car.turnCd = Math.max(0, (car.turnCd || 0) - dt);
+  const axisRoads = car.axis === 'v' ? [480, 1200, 1920, 2400] : [480, 1200, 1920, 2640, 3360];
+  const crossRoads = car.axis === 'v' ? [480, 1200, 1920, 2640, 3360] : [480, 1200, 1920, 2400];
+  const pos = car.axis === 'v' ? car.y : car.x;
+  let nearestCross = null;
+  let nearestD = Infinity;
+  for (const cr of crossRoads) {
+    const d = (cr - pos) * car.dir;
+    if (d > 0 && d < nearestD) {
+      nearestD = d;
+      nearestCross = cr;
+    }
+  }
+  if (nearestCross !== null && nearestD < 40 && car.turnCd <= 0 && Math.random() < 0.6) {
+    const newAxis = car.axis === 'v' ? 'h' : 'v';
+    car.axis = newAxis;
+    car.dir = Math.random() < 0.5 ? 1 : -1;
+    car.road = nearestCross;
+    car.angle = newAxis === 'v' ? (car.dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (car.dir > 0 ? 0 : Math.PI);
+    car.turnCd = 2;
+  }
+  car.speed += (car.cruise - car.speed) * Math.min(1, 1.5 * dt);
+  car.x += Math.cos(car.angle) * car.speed * dt;
+  car.y += Math.sin(car.angle) * car.speed * dt;
+}
+
+export function updateMissions(state, dt) {
+  const ms = state.mission;
+  if (ms.briefingT > 0) {
+    ms.briefingT -= dt;
+    return; // Briefing card holds the world still.
+  }
+  if (!ms.active) return;
+  const m = MISSIONS[ms.idx];
+  const step = m.steps[ms.step];
+  if (!step) return;
+  const p = state.player;
+  const d = ms.data;
+  d.stepT = (d.stepT || 0) + dt;
+
+  switch (step.type) {
+    case 'steal':
+      if (p.inCar) completeStep(state);
+      break;
+    case 'goto':
+    case 'drive': {
+      const dist = Math.hypot(p.x - step.x, p.y - step.y);
+      if (dist < step.r) completeStep(state);
+      break;
+    }
+    case 'kill': {
+      if (!d.spawned) {
+        d.spawned = true;
+        state.stats.missionKills = 0;
+        combat.spawnGoons(state, step.spawnAt[0], step.spawnAt[1], step.count, { weapon: step.count > 6 ? 'smg' : 'pistol' });
+        if (step.count > 6) state.pickups.push({ x: step.spawnAt[0] + 60, y: step.spawnAt[1], kind: 'smg', amount: 0, t: 0 });
+      }
+      if (state.stats.missionKills >= step.count) completeStep(state);
+      break;
+    }
+    case 'survive': {
+      if (state.wanted.heat < step.wanted * 20 - 5) addHeat(state, 30 * dt);
+      if (d.stepT >= step.seconds) completeStep(state);
+      break;
+    }
+    case 'tail': {
+      if (!d.tailCar) spawnTailCar(state);
+      const car = d.tailCar;
+      driveTailCar(state, car, dt);
+      const dist = Math.hypot(p.x - car.x, p.y - car.y);
+      if (dist < 130) {
+        d.spottedT = (d.spottedT || 0) + dt;
+        if (d.spottedT > 3) {
+          failMission(state, 'The courier spotted you');
+          return;
+        }
       } else {
-        const gp = garagePoint(G);
-        setWaypoint(G, gp.x, gp.y, "Kiki's Garage");
-        if (dist(p.x, p.y, gp.x, gp.y) < 110) completeMission(G);
+        d.spottedT = 0;
+      }
+      if (dist > 800) {
+        failMission(state, 'You lost the courier');
+        return;
+      }
+      d.tailT = (d.tailT || 0) + dt;
+      if (d.tailT >= step.seconds) {
+        car.driver = 'parked';
+        car.speed = 0;
+        combat.spawnGoons(state, car.x, car.y, 2, {});
+        completeStep(state);
       }
       break;
     }
-    case 1: {
-      if (m.stage === 0) {
-        setWaypoint(G, 2100, 1200, 'Package');
-        if (dist(p.x, p.y, 2100, 1200) < 90) {
-          m.stage = 1;
-          s.pkg = { x: 2100, y: 1200 };
-          spawnPickup(G, 2100, 1200, 'package', 0);
-          // The package pickup is the story one, not a hidden one.
-          const pk = G.pickups[G.pickups.length - 1];
-          pk.story = true;
-        }
-      } else if (m.stage === 1) {
-        setWaypoint(G, 2100, 1200, 'Package');
-        if (s.pkg && dist(p.x, p.y, s.pkg.x, s.pkg.y) < 40) {
-          // Collect the story package directly.
-          m.stage = 2;
-          G.pickups = G.pickups.filter((pk) => !pk.story);
-          G.message = 'Package secured. Deliver it to the Harbor.';
-          G.messageTimer = 3;
-        }
-      } else {
-        setWaypoint(G, 840, 2280, 'Warehouse');
-        if (dist(p.x, p.y, 840, 2280) < 110) completeMission(G);
+    case 'chase': {
+      const car = d.chaseCar;
+      if (!car) break;
+      if (d.chaseDown || car.health <= 0) {
+        if (car.health > 0) explodeCar(state, car);
+        completeStep(state);
+        break;
+      }
+      // The boss flees toward the docks along the roads.
+      car.turnCd = Math.max(0, (car.turnCd || 0) - dt);
+      const tx = 1000;
+      const ty = 1500;
+      const want = Math.atan2(ty - car.y, tx - car.x);
+      let diff = want - car.angle;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      const steer = Math.max(-1, Math.min(1, diff * 2));
+      car.speed += ((car.cruise + 120) - car.speed) * Math.min(1, 1.2 * dt);
+      car.angle += steer * 2.2 * dt;
+      car.x += Math.cos(car.angle) * car.speed * dt;
+      car.y += Math.sin(car.angle) * car.speed * dt;
+      if (Math.hypot(car.x - tx, car.y - ty) < 120) {
+        car.cruise = 120;
       }
       break;
     }
-    case 2: {
-      if (m.stage === 0) {
-        setWaypoint(G, 840, 2100, 'Warehouse');
-        if (dist(p.x, p.y, 840, 2100) < 200) {
-          m.stage = 1;
-          s.total = 5;
-          s.kills = 0;
-          // Yard around the warehouse, never inside the building itself.
-          // South and side spots: clear lines of fire from the approach.
-          const spots = [[720, 2260], [960, 2260], [680, 2140], [1000, 2140], [840, 2320]];
-          for (const [x, y] of spots) spawnEnemy(G, x, y, 'goon');
-        }
-      } else {
-        setWaypoint(G, 840, 2100, 'Warehouse');
-        s.kills = s.total - G.enemies.filter((e) => e.hp > 0).length;
-        if (G.enemies.filter((e) => e.hp > 0).length === 0) completeMission(G);
+    case 'holdout': {
+      d.waveT = (d.waveT || 0) - dt;
+      const wave = Math.floor(d.stepT / 15) + 1;
+      if (d.waveT <= 0) {
+        d.waveT = 6;
+        const n = Math.min(2 + wave, 5);
+        combat.spawnGoons(state, p.x + (Math.random() < 0.5 ? -320 : 320), p.y + (Math.random() < 0.5 ? -260 : 260), n, { weapon: 'smg' });
+        addHeat(state, 20);
+        spawnSmoke(state, p.x, p.y, 4);
       }
-      break;
-    }
-    case 3: {
-      if (m.stage === 0) {
-        G.waypoint = null;
-        if (p.inCar) {
-          m.stage = 1;
-          m.timer = 75;
-          G.heat = 50; // 3 stars
-          G.heatLock = 75;
-          G.message = '3 stars! Lose the cops and reach the Motel.';
-          G.messageTimer = 3;
-        }
-      } else {
-        m.timer -= dt;
-        G.heat = Math.max(G.heat, 45);
-        const motel = landmarkById(G.city, 'motel');
-        setWaypoint(G, motel.x, motel.y + 120, 'Palms Motel');
-        if (dist(p.x, p.y, motel.x, motel.y + 120) < 120) {
-          G.heatLock = 0;
-          completeMission(G);
-        } else if (m.timer <= 0) {
-          failMission(G, 'Out of time — the cops boxed you in.');
-        }
-      }
-      break;
-    }
-    case 4: {
-      if (m.stage === 0) {
-        if (!s.target) {
-          const car = makeCar('sedan', 1500, 1200, 0, 'target');
-          car.color = '#222831';
-          car.speed = 130;
-          car.ai = { loop: [[1500, 1200], [2400, 1200], [2400, 1920], [1500, 1920]], wp: 0 };
-          G.cars.push(car);
-          s.target = car;
-          s.tail = 0;
-          s.lost = 0;
-          setWaypoint(G, car.x, car.y, 'Target');
-        }
-        const t = s.target;
-        if (t.dead) {
-          failMission(G, 'You wrecked the target car — Marlowe wanted him alive.');
-          break;
-        }
-        // Drive the target around its loop.
-        const wp = t.ai.loop[t.ai.wp];
-        const a = angleTo(t.x, t.y, wp[0], wp[1]);
-        const diff = Math.atan2(Math.sin(a - t.angle), Math.cos(a - t.angle));
-        t.angle += clamp(diff, -1.8 * dt, 1.8 * dt);
-        t.x += Math.cos(t.angle) * t.speed * dt;
-        t.y += Math.sin(t.angle) * t.speed * dt;
-        if (dist(t.x, t.y, wp[0], wp[1]) < 60) t.ai.wp = (t.ai.wp + 1) % t.ai.loop.length;
-        setWaypoint(G, t.x, t.y, 'Target');
-        const d = dist(p.x, p.y, t.x, t.y);
-        if (d < 70) {
-          s.tail = Math.max(0, s.tail - dt * 2);
-          G.message = 'Too close — he will spot you!';
-          G.messageTimer = 1;
-        } else if (d < 340) {
-          s.tail += dt;
-          s.lost = 0;
-        } else {
-          s.lost += dt;
-          if (s.lost > 6) {
-            failMission(G, 'You lost the target.');
-            t.driver = 'none';
-          }
-        }
-        if (s.tail >= 20) {
-          m.stage = 1;
-          // Stop south of the motel, on open ground — never inside it.
-          t.ai.loop = [[3000, 2280]];
-          t.ai.wp = 0; // the new loop has one point; reset the index
-          t.speed = 150;
-          G.message = 'He stopped at the Motel. Confront him.';
-          G.messageTimer = 3;
-        }
-      } else {
-        const t = s.target;
-        const wp = t.ai.loop[t.ai.wp] || t.ai.loop[0];
-        const a = angleTo(t.x, t.y, wp[0], wp[1]);
-        const diff = Math.atan2(Math.sin(a - t.angle), Math.cos(a - t.angle));
-        t.angle += clamp(diff, -1.8 * dt, 1.8 * dt);
-        t.x += Math.cos(t.angle) * t.speed * dt;
-        t.y += Math.sin(t.angle) * t.speed * dt;
-        setWaypoint(G, t.x, t.y, 'Confront him');
-        if (dist(t.x, t.y, wp[0], wp[1]) < 80) {
-          t.speed = 0;
-          t.driver = 'none';
-          // The driver steps out and runs.
-          if (!s.driverOut) {
-            s.driverOut = true;
-            const d = spawnPed(G, t.x + 20, t.y);
-            d.state = 'flee';
-            d.panic = 10;
-            s.driver = d;
-          }
-        }
-        if (s.driver && !p.inCar && dist(p.x, p.y, s.driver.x, s.driver.y) < 42) {
-          completeMission(G);
-        }
-        // The driver only gets away if he stays out of reach for a while —
-        // a single frame at long range (he just stepped out of the car)
-        // must not fail the job on the spot.
-        if (s.driver && dist(p.x, p.y, s.driver.x, s.driver.y) > 900) {
-          s.driverLost = (s.driverLost || 0) + dt;
-          if (s.driverLost > 5) failMission(G, 'The informant got away.');
-        } else {
-          s.driverLost = 0;
-        }
-      }
-      break;
-    }
-    case 5: {
-      if (m.stage === 0) {
-        // Boardwalk fight happens on the open sand north of the pier —
-        // the pier itself (3060,2580) blocks fire, so the trigger and
-        // the crew stay north of it.
-        setWaypoint(G, 3060, 2460, 'Boardwalk');
-        if (dist(p.x, p.y, 3060, 2460) < 180) {
-          m.stage = 1;
-          s.total = 6;
-          s.kills = 0;
-          // Boardwalk yard north of the pier, never inside the pier itself.
-          const spots = [[2920, 2480], [3200, 2480], [2900, 2420], [3220, 2420], [2960, 2400], [2840, 2460]];
-          for (const [x, y] of spots) spawnEnemy(G, x, y, 'goon');
-        }
-      } else if (m.stage === 1) {
-        setWaypoint(G, 3060, 2580, 'Boardwalk');
-        s.kills = s.total - G.enemies.filter((e) => e.hp > 0).length;
-        if (G.enemies.filter((e) => e.hp > 0).length === 0) {
-          m.stage = 2;
-          // The leader runs along the boardwalk's north side, on open ground.
-          const leader = spawnPed(G, 3100, 2470);
-          leader.state = 'flee';
-          leader.panic = 60;
-          leader.speed = 210;
-          s.leader = leader;
-          G.message = 'Their leader is running — catch him!';
-          G.messageTimer = 3;
-        }
-      } else {
-        const l = s.leader;
-        if (l) {
-          setWaypoint(G, l.x, l.y, 'Leader');
-          // The leader runs along the boardwalk, away from the player.
-          const a = angleTo(p.x, p.y, l.x, l.y);
-          l.x += Math.cos(a) * 210 * dt;
-          l.y = clamp(l.y, 2440, 2500);
-          l.x = clamp(l.x, 200, WORLD.WATER_X - 100);
-          if (dist(p.x, p.y, l.x, l.y) < 34) completeMission(G);
-          if (dist(p.x, p.y, l.x, l.y) > 1000) failMission(G, 'The leader escaped down the beach.');
-        }
-      }
-      break;
-    }
-    case 6: {
-      if (m.stage === 0) {
-        const bank = landmarkById(G.city, 'bank');
-        setWaypoint(G, bank.x, bank.y + 150, 'Solmar Bank');
-        if (dist(p.x, p.y, bank.x, bank.y + 150) < 140) {
-          m.stage = 1;
-          s.wave = 1;
-          s.waveTotal = 3;
-          G.heat = Math.max(G.heat, 45);
-          spawnWave(G, 3);
-        }
-      } else if (m.stage === 1) {
-        const bank = landmarkById(G.city, 'bank');
-        setWaypoint(G, bank.x, bank.y + 150, 'Hold the street');
-        const alive = G.cops.filter((c) => c.kind === 'foot' && c.hp > 0).length + G.enemies.filter((e) => e.hp > 0).length;
-        if (alive === 0) {
-          if (s.wave >= s.waveTotal) {
-            m.stage = 2;
-            G.message = 'The take is yours — get to Kiki\'s!';
-            G.messageTimer = 3;
-          } else {
-            s.wave++;
-            G.message = 'Wave ' + s.wave + ' incoming!';
-            G.messageTimer = 2;
-            spawnWave(G, 3 + s.wave);
-          }
-        }
-      } else {
-        const gp = garagePoint(G);
-        setWaypoint(G, gp.x, gp.y, "Kiki's Garage");
-        if (dist(p.x, p.y, gp.x, gp.y) < 110) completeMission(G);
-      }
-      break;
-    }
-    case 7: {
-      if (m.stage === 0) {
-        if (!s.convoy) {
-          s.convoy = [];
-          s.kills = 0;
-          // Convoy runs a loop on the roads, never through buildings.
-          const starts = [[480, 1200], [560, 1200], [640, 1200]];
-          for (const [x, y] of starts) {
-            const car = makeCar('pickup', x, y, 0, 'convoy');
-            car.color = '#3a2a4a';
-            car.speed = 150;
-            car.ai = { loop: [[480, 1200], [480, 1920], [1200, 1920], [1200, 1200]], wp: 0 };
-            G.cars.push(car);
-            s.convoy.push(car);
-          }
-        }
-        for (const car of s.convoy) {
-          if (car.dead) continue;
-          const wp = car.ai.loop[car.ai.wp];
-          const a = angleTo(car.x, car.y, wp[0], wp[1]);
-          const diff = Math.atan2(Math.sin(a - car.angle), Math.cos(a - car.angle));
-          car.angle += clamp(diff, -1.8 * dt, 1.8 * dt);
-          car.x += Math.cos(car.angle) * car.speed * dt;
-          car.y += Math.sin(car.angle) * car.speed * dt;
-          if (dist(car.x, car.y, wp[0], wp[1]) < 60) car.ai.wp = (car.ai.wp + 1) % car.ai.loop.length;
-        }
-        const alive = s.convoy.filter((c) => !c.dead).length;
-        s.kills = s.convoy.length - alive;
-        if (s.convoy.length > 0) setWaypoint(G, s.convoy.find((c) => !c.dead)?.x || 0, s.convoy.find((c) => !c.dead)?.y || 0, 'Convoy');
-        if (alive === 0) {
-          m.stage = 1;
-          s.total = 7;
-          s.kills = 0;
-          // Arm the player on the warehouse approach before the last fight.
-          spawnPickup(G, 860, 2260, 'weapon-smg', 0);
-          spawnPickup(G, 900, 2260, 'ammo-smg', 60);
-          spawnPickup(G, 820, 2280, 'health', 25);
-          // Yard around the warehouse, never inside the building itself.
-          const spots = [[720, 2260], [960, 2260], [840, 1960], [680, 2200], [1000, 2200], [760, 2320], [840, 2320]];
-          for (let i = 0; i < spots.length; i++) {
-            spawnEnemy(G, spots[i][0], spots[i][1], i === 6 ? 'boss' : 'goon');
-          }
-          G.message = 'The King is in the warehouse. End this.';
-          G.messageTimer = 3;
-        }
-      } else {
-        setWaypoint(G, 840, 2100, 'Warehouse');
-        s.kills = s.total - G.enemies.filter((e) => e.hp > 0).length;
-        if (G.enemies.filter((e) => e.hp > 0).length === 0) completeMission(G);
-      }
+      if (d.stepT >= step.seconds) completeStep(state);
       break;
     }
     default:
@@ -439,72 +331,62 @@ export function updateMission(G, dt) {
   }
 }
 
-function spawnWave(G, n) {
-  for (let i = 0; i < n; i++) spawnCop(G, 'foot');
-  if (n >= 4) spawnCop(G, 'cruiser');
-}
-
-// --- Taxi side job -------------------------------------------------------
-export function updateTaxi(G, dt) {
-  const p = G.player;
-  const t = G.taxi;
-  if (!t.active) {
-    if (p.inCar && p.inCar.model === 'taxi' && !G.mission) {
-      t.wait += dt;
-      if (t.wait > 6) {
-        t.wait = 0;
-        // A random city-wide point rarely lands near the cab: try several
-        // and take the first one within a short drive, so a fare shows
-        // up within seconds of driving a taxi instead of minutes.
-        let spot = null;
-        for (let k = 0; k < 8; k++) {
-          const c = randomSidewalkPoint(G.rng);
-          if (dist(c.x, c.y, p.x, p.y) < 900) { spot = c; break; }
-        }
-        if (spot) {
-          t.active = true;
-          t.stage = 'pickup';
-          t.ped = spawnPed(G, spot.x, spot.y);
-          t.ped.state = 'wait';
-          t.fare = 0;
-          G.message = 'A fare is waving you down — pick them up!';
-          G.messageTimer = 3;
-        }
+// ---- Taxi fares -----------------------------------------------------------
+// When Rook is driving with no mission, a fare may appear on a nearby sidewalk.
+// Eight candidate spots within 900px are tried so a fare almost always appears.
+export function updateTaxi(state, dt) {
+  const taxi = state.taxi;
+  const p = state.player;
+  if (state.mission.active) {
+    if (taxi.active) {
+      taxi.active = false;
+      if (taxi.ped) taxi.ped.taxiFare = false;
+    }
+    return;
+  }
+  if (!taxi.active) {
+    taxi.cool -= dt;
+    if (taxi.cool > 0 || !p.inCar) return;
+    // Try 8 sidewalk points near the cab.
+    for (let i = 0; i < 8; i++) {
+      const cand = roadPointNear(state.rng, p.x, p.y, 900);
+      const ped = state.peds.find((q) => Math.hypot(q.x - cand.x, q.y - cand.y) < 160 && !q.taxiFare);
+      if (ped) {
+        ped.taxiFare = true;
+        const dest = roadPointNear(state.rng, p.x + (Math.random() < 0.5 ? -1400 : 1400), p.y + (Math.random() < 0.5 ? -1000 : 1000), 500);
+        taxi.active = true;
+        taxi.phase = 'pickup';
+        taxi.ped = ped;
+        taxi.dest = dest;
+        taxi.fare = 60 + Math.floor(Math.hypot(dest.x - ped.x, dest.y - ped.y) / 40);
+        taxi.timer = 90;
+        break;
       }
     }
     return;
   }
-  if (t.stage === 'pickup') {
-    G.waypoint = G.waypoint || { x: t.ped.x, y: t.ped.y, label: 'Fare' };
-    if (p.inCar && dist(p.x, p.y, t.ped.x, t.ped.y) < 48 && Math.abs(p.speed) < 60) {
-      G.peds = G.peds.filter((pd) => pd !== t.ped);
-      t.stage = 'dropoff';
-      const dest = randomStreetPoint(G.rng);
-      t.dest = dest;
-      t.fare = 40 + Math.floor(dist(p.x, p.y, dest.x, dest.y) / 25);
-      G.message = 'Fare aboard — take them to the marker.';
-      G.messageTimer = 3;
-    }
-    if (!p.inCar) {
-      t.active = false;
-      G.message = 'Fare cancelled.';
-      G.messageTimer = 2;
-    }
-  } else if (t.stage === 'dropoff') {
-    G.waypoint = { x: t.dest.x, y: t.dest.y, label: 'Drop-off' };
-    if (p.inCar && dist(p.x, p.y, t.dest.x, t.dest.y) < 55) {
-      p.cash += t.fare;
-      G.message = 'Fare paid: $' + t.fare;
-      G.messageTimer = 3;
-      G.audio.sfx('cash');
-      G.stats.fares++;
-      t.active = false;
-      t.wait = 0;
-      G.waypoint = null;
-    }
-    if (!p.inCar) {
-      t.active = false;
-      G.waypoint = null;
-    }
+  taxi.timer -= dt;
+  if (taxi.timer <= 0) {
+    taxi.active = false;
+    if (taxi.ped) taxi.ped.taxiFare = false;
+    state.hudFlash = { text: 'Fare cancelled — too slow', t: 2 };
+    taxi.cool = 20;
+    return;
   }
+  if (taxi.phase === 'pickup') {
+    if (Math.hypot(p.x - taxi.ped.x, p.y - taxi.ped.y) < 70 && p.inCar) {
+      taxi.phase = 'dropoff';
+      taxi.ped.gone = true;
+      state.audio.pickup();
+      state.hudFlash = { text: `Fare aboard — take them to the gold marker ($${taxi.fare})`, t: 2.5 };
+    }
+  } else if (Math.hypot(p.x - taxi.dest.x, p.y - taxi.dest.y) < 80) {
+    p.cash += taxi.fare;
+    state.stats.taxiEarned += taxi.fare;
+    state.audio.cash();
+    state.hudFlash = { text: `Fare paid +$${taxi.fare}`, t: 2.5 };
+    taxi.active = false;
+    taxi.cool = 25;
+  }
+  state.peds = state.peds.filter((q) => !q.gone);
 }

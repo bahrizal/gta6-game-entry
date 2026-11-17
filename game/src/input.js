@@ -1,66 +1,87 @@
-// Keyboard + mouse input. Held keys are a live set; one-shot presses are
-// queued and consumed once per fixed step so a tap is never missed.
-export function createInput(canvas) {
-  const keys = new Set();
-  const pressed = new Set();
-  const mouse = { x: 640, y: 360, down: false, clicked: false, wx: 0, wy: 0 };
+// Keyboard + mouse input: held keys, one-shot actions, and the aim point.
+export const ACTION_CONFIRM = 1;
+export const ACTION_PAUSE = 2;
+export const ACTION_INTERACT = 4;
+export const ACTION_RELOAD = 8;
+export const ACTION_MUTE = 16;
+export const ACTION_PUNCH = 32;
 
-  function onKeyDown(e) {
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) {
+export function createInput(canvas) {
+  const held = new Set();
+  const mouse = { x: 0, y: 0, down: false, clicked: false, rightDown: false };
+  let actions = 0;
+
+  function keyDown(e) {
+    if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
       e.preventDefault();
     }
-    if (!keys.has(e.code)) pressed.add(e.code);
-    keys.add(e.code);
+    if (e.repeat) return;
+    held.add(e.code);
+    if (e.code === 'Enter' || e.code === 'Space') actions |= ACTION_CONFIRM;
+    if (e.code === 'KeyP' || e.code === 'Escape') actions |= ACTION_PAUSE;
+    if (e.code === 'KeyE') actions |= ACTION_INTERACT;
+    if (e.code === 'KeyR') actions |= ACTION_RELOAD;
+    if (e.code === 'KeyM') actions |= ACTION_MUTE;
   }
-  function onKeyUp(e) {
-    keys.delete(e.code);
+  function keyUp(e) {
+    held.delete(e.code);
   }
-  function onMouseMove(e) {
+  function mouseMove(e) {
     const r = canvas.getBoundingClientRect();
-    mouse.x = ((e.clientX - r.left) / r.width) * 1280;
-    mouse.y = ((e.clientY - r.top) / r.height) * 720;
+    mouse.x = ((e.clientX - r.left) / r.width) * canvas.width;
+    mouse.y = ((e.clientY - r.top) / r.height) * canvas.height;
   }
-  function onMouseDown(e) {
+  function mouseDown(e) {
+    mouseMove(e);
     if (e.button === 0) {
       mouse.down = true;
       mouse.clicked = true;
-      onMouseMove(e);
+      actions |= ACTION_CONFIRM;
     }
+    if (e.button === 2) mouse.rightDown = true;
   }
-  function onMouseUp(e) {
+  function mouseUp(e) {
     if (e.button === 0) mouse.down = false;
-  }
-  function onBlur() {
-    keys.clear();
-    mouse.down = false;
+    if (e.button === 2) mouse.rightDown = false;
   }
 
-  window.addEventListener('keydown', onKeyDown);
-  window.addEventListener('keyup', onKeyUp);
-  window.addEventListener('blur', onBlur);
-  canvas.addEventListener('mousemove', onMouseMove);
-  canvas.addEventListener('mousedown', onMouseDown);
-  window.addEventListener('mouseup', onMouseUp);
+  window.addEventListener('keydown', keyDown);
+  window.addEventListener('keyup', keyUp);
+  canvas.addEventListener('mousemove', mouseMove);
+  canvas.addEventListener('mousedown', mouseDown);
+  window.addEventListener('mouseup', mouseUp);
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
   return {
-    keys,
+    held,
     mouse,
     isDown(code) {
-      return keys.has(code);
+      return held.has(code);
     },
-    anyDown(codes) {
-      return codes.some((c) => keys.has(c));
+    // WASD / arrows as a normalised 2D direction.
+    direction() {
+      let x = 0;
+      let y = 0;
+      if (held.has('KeyA') || held.has('ArrowLeft')) x -= 1;
+      if (held.has('KeyD') || held.has('ArrowRight')) x += 1;
+      if (held.has('KeyW') || held.has('ArrowUp')) y -= 1;
+      if (held.has('KeyS') || held.has('ArrowDown')) y += 1;
+      if (x !== 0 && y !== 0) {
+        const inv = 1 / Math.hypot(x, y);
+        x *= inv;
+        y *= inv;
+      }
+      return { x, y };
     },
-    wasPressed(code) {
-      return pressed.has(code);
+    sprinting() {
+      return held.has('ShiftLeft') || held.has('ShiftRight');
     },
-    anyPressed(codes) {
-      return codes.some((c) => pressed.has(c));
-    },
-    // Call once per fixed step, after the step has read the queue.
-    endStep() {
-      pressed.clear();
+    takeActions() {
+      const a = actions;
+      actions = 0;
+      const clicked = mouse.clicked;
       mouse.clicked = false;
+      return { bits: a, clicked };
     },
   };
 }

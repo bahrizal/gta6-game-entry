@@ -1,499 +1,602 @@
 // Solmar Heat — boot, fixed-step loop, screens (title / play / pause /
-// busted / wasted / win), save/load and the mission flow.
-import { WORLD, TUNING, KEYS } from './config.js';
-import { mulberry32, clamp, fmtCash } from './random.js';
-import { createInput } from './input.js';
+// busted / wasted / how-to), save/load and the ?shot= staging hook.
+import { SAVE_KEY, STEP, VIEW_H, VIEW_W } from './config.js';
+import { createRandom } from './random.js';
+import { ACTION_CONFIRM, ACTION_INTERACT, ACTION_MUTE, ACTION_PAUSE, ACTION_RELOAD, createInput } from './input.js';
 import { createAudio } from './audio.js';
-import { buildCity, randomStreetPoint, randomSidewalkPoint, landmarkById } from './city.js';
+import { buildCity } from './city.js';
 import {
-  makePlayer, makeCar, spawnTrafficCar, spawnParkedCar, spawnPed,
-  updatePlayer, updatePeds, updateTraffic, updateCops, exitCar,
-  respawnAfterBusted, respawnAfterWasted, burst,
+  addHeat, createPlayer, damagePlayer, enterCar, exitCar, nearestCar,
+  spawnParkedCars, spawnPeds, spawnTraffic, updateCars, updateParticles,
+  updatePeds, updatePlayer, updatePolice, updateWanted,
 } from './entities.js';
-import { updateCombat, spawnPickup } from './combat.js';
-import { MISSIONS, startMission, updateMission, updateTaxi, placePackages, completeMission } from './missions.js';
+import { combat } from './combat.js';
+import {
+  MISSIONS, createMissionState, failMission, missionMarker, objectiveText,
+  startMission, updateMissions, updateTaxi, waypoint,
+} from './missions.js';
 import { drawHUD } from './hud.js';
-import { drawWorld, dayFactor } from './render.js';
+import { drawWorld } from './render.js';
 import { stageShot } from './shots.js';
 
-const SAVE_KEY = 'solmar-heat-save-v1';
-const STEP = 1 / 60;
-
-const canvas = document.getElementById('game');
-const ctx = canvas.getContext('2d');
-const input = createInput(canvas);
-const audio = createAudio();
+const MAX_FRAME = 0.25;
 
 const params = new URLSearchParams(window.location.search);
-const seed = parseInt(params.get('seed') || '1337', 10);
-const shotName = params.get('shot');
+const shot = params.get('shot');
+const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
+const seed = Number.isInteger(seedParam) ? seedParam : Math.floor(Math.random() * 4294967296);
 
-function newGame(save) {
-  const rng = mulberry32(seed);
-  const city = buildCity(seed);
-  const G = {
-    rng, city, audio,
+const canvas = document.getElementById('game');
+const statusEl = document.getElementById('status');
+canvas.width = VIEW_W;
+canvas.height = VIEW_H;
+const ctx = canvas.getContext('2d');
+
+function createState(seedValue) {
+  const rng = createRandom(seedValue);
+  const city = buildCity(rng);
+  const state = {
+    rng,
+    city,
+    seed: seedValue,
     time: 0,
-    clock: TUNING.startClock,
+    clock: 17.5,
     screen: 'title',
-    titleSel: 0,
-    pauseSel: 0,
-    player: makePlayer(1920, 1140),
-    cars: [], peds: [], cops: [], enemies: [],
-    bullets: [], particles: [], pickups: [],
-    heat: 0, heatLock: 0, wanted: 0, lastCrime: -99,
-    lastShotAt: -99, lastShotX: 0, lastShotY: 0,
-    missionIndex: 0, mission: null, missionCard: null,
-    missionFailed: false, missionFailReason: '',
-    waypoint: null, taxi: { active: false, stage: 'pickup', ped: null, dest: null, fare: 0, wait: 0 },
-    packagesCollected: 0,
-    camera: { x: 1920 - 640, y: 1140 - 360, shake: 0 },
-    message: '', messageTimer: 0, crimeFlash: '',
-    stats: { kills: 0, carsStolen: 0, missionsDone: 0, fares: 0 },
-    storyComplete: false,
-    shotStaged: null,
-    saveTimer: 0,
+    titleMenu: 0,
+    pauseMenu: 0,
+    menuRects: [],
+    camera: { x: 1920, y: 1200 },
+    shake: 0,
+    player: createPlayer(1920, 2080),
+    cars: [],
+    peds: [],
+    cops: [],
+    enemies: [],
+    bullets: [],
+    particles: [],
+    pickups: [],
+    skids: [],
+    wanted: { heat: 0, stars: 0, lastCrime: -100 },
+    mission: createMissionState(),
+    missions: MISSIONS,
+    taxi: { active: false, phase: 'pickup', ped: null, dest: null, fare: 0, timer: 0, cool: 8 },
+    stats: { kills: 0, missionKills: 0, carsStolen: 0, copsDown: 0, pedsHit: 0, packages: 0, missionsDone: 0, taxiEarned: 0 },
+    lastShot: null,
+    muzzle: null,
+    hudFlash: null,
+    objective: '',
+    prompt: '',
+    waypoint: null,
+    marker: null,
+    nextId: 1,
+    audio: createAudio(),
+    combat,
+    saveExists: false,
+    hasSmg: false,
   };
-  G.player.walkPhase = 0;
-  // Populate the world.
-  for (let i = 0; i < 12; i++) spawnTrafficCar(G);
-  for (let i = 0; i < 22; i++) spawnPed(G);
-  for (let i = 0; i < 6; i++) {
-    const p = randomStreetPoint(rng);
-    spawnParkedCar(G, p.x, p.y);
-  }
-  placePackages(G);
-  spawnPickup(G, 1920, 1050, 'health', 25);
-  spawnPickup(G, 1560, 780, 'ammo-pistol', 24);
-  if (save) {
-    G.player.cash = save.cash;
-    G.missionIndex = save.missionIndex;
-    G.player.x = save.x;
-    G.player.y = save.y;
-    G.player.weapon = save.weapon;
-    G.player.ammo = save.ammo;
-    G.packagesCollected = save.packagesCollected;
-    G.stats = save.stats;
-    G.camera.x = clamp(save.x - 640, 0, WORLD.W - 1280);
-    G.camera.y = clamp(save.y - 360, 0, WORLD.H - 720);
-  }
-  return G;
+  spawnParkedCars(state, rng, 16);
+  spawnTraffic(state, rng, 12);
+  spawnPeds(state, rng, 18);
+  // A pistol pickup and an SMG pickup near the start so combat is reachable fast.
+  state.pickups.push({ x: 1920, y: 1980, kind: 'ammo', amount: 0, t: 0 });
+  state.pickups.push({ x: 2100, y: 2080, kind: 'smg', amount: 0, t: 0 });
+  return state;
 }
 
-let G = newGame(loadSave());
-window.__game = G;
+const state = createState(seed);
+window.__solmar = state;
 
-function loadSave() {
+function readSave() {
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
+    const raw = window.localStorage.getItem(SAVE_KEY);
     return raw ? JSON.parse(raw) : null;
-  } catch (e) {
+  } catch {
     return null;
   }
 }
 
 function saveGame() {
+  const p = state.player;
   try {
-    const p = G.player;
-    localStorage.setItem(SAVE_KEY, JSON.stringify({
-      cash: p.cash, missionIndex: G.missionIndex,
-      x: p.x, y: p.y, weapon: p.weapon, ammo: p.ammo,
-      packagesCollected: G.packagesCollected, stats: G.stats,
+    window.localStorage.setItem(SAVE_KEY, JSON.stringify({
+      cash: p.cash, weapon: p.weapon, ammo: p.ammo, mag: p.mag,
+      x: p.x, y: p.y, clock: state.clock,
+      missionIdx: state.mission.idx, completed: state.mission.completed,
+      packages: state.city.packages.map((pk) => pk.taken),
+      stats: state.stats, hasSmg: state.hasSmg,
     }));
-  } catch (e) {
-    // Storage unavailable (private mode): the game still plays.
+    state.saveExists = true;
+  } catch { /* storage can be off */ }
+}
+
+function loadSave() {
+  const s = readSave();
+  if (!s) return false;
+  const p = state.player;
+  p.cash = s.cash ?? 200;
+  p.weapon = s.weapon ?? 'fists';
+  p.ammo = s.ammo ?? { pistol: 48, smg: 0 };
+  p.mag = s.mag ?? { pistol: 12, smg: 0 };
+  p.x = s.x ?? 1920;
+  p.y = s.y ?? 2080;
+  p.hp = 100;
+  p.inCar = null;
+  state.clock = s.clock ?? 17.5;
+  state.mission.idx = s.missionIdx ?? 0;
+  state.mission.completed = s.completed ?? [];
+  state.hasSmg = !!s.hasSmg;
+  if (Array.isArray(s.packages)) {
+    s.packages.forEach((taken, i) => {
+      if (state.city.packages[i]) state.city.packages[i].taken = !!taken;
+    });
+  }
+  if (s.stats) Object.assign(state.stats, s.stats);
+  state.camera.x = p.x;
+  state.camera.y = p.y;
+  return true;
+}
+
+state.saveExists = !!readSave();
+
+function announce(message) {
+  statusEl.textContent = message;
+}
+
+function updateCamera(dt) {
+  const p = state.player;
+  if (state.screen === 'title') {
+    state.camera.x = 1920 + Math.sin(state.time * 0.05) * 700;
+    state.camera.y = 1200 + Math.cos(state.time * 0.04) * 380;
+    return;
+  }
+  const tx = Math.max(VIEW_W / 2, Math.min(3840 - VIEW_W / 2, p.x));
+  const ty = Math.max(VIEW_H / 2, Math.min(2880 - VIEW_H / 2, p.y));
+  const k = Math.min(1, 6 * dt);
+  state.camera.x += (tx - state.camera.x) * k;
+  state.camera.y += (ty - state.camera.y) * k;
+}
+
+function computePrompt() {
+  const p = state.player;
+  if (state.mission.active || state.screen !== 'play') {
+    state.prompt = '';
+    return;
+  }
+  const marker = missionMarker(state);
+  if (marker && Math.hypot(p.x - marker.x, p.y - marker.y) < 110) {
+    state.prompt = `Press E — start mission: ${MISSIONS[state.mission.idx].title}`;
+    return;
+  }
+  if (p.inCar) {
+    state.prompt = 'E — exit car';
+    return;
+  }
+  const car = nearestCar(state, p.x, p.y, 80);
+  if (car) {
+    state.prompt = car.driver === 'traffic' ? 'E — steal car (the driver will run)' : 'E — drive';
+    return;
+  }
+  state.prompt = '';
+}
+
+function updateWorld(dt, input) {
+  state.time += dt;
+  state.clock = (state.clock + dt / 60) % 24;
+  state.shake = Math.max(0, state.shake - 30 * dt);
+  if (state.muzzle) {
+    state.muzzle.t -= dt;
+    if (state.muzzle.t <= 0) state.muzzle = null;
+  }
+  if (state.hudFlash) {
+    state.hudFlash.t -= dt;
+    if (state.hudFlash.t <= 0) state.hudFlash = null;
+  }
+  // Briefing card: the world holds still.
+  if (state.mission.briefingT > 0) {
+    updateMissions(state, dt);
+    updateCamera(dt);
+    return;
+  }
+  if (input) updatePlayer(state, input, dt);
+  updateCars(state, dt);
+  updatePeds(state, dt);
+  updatePolice(state, dt);
+  updateWanted(state, dt);
+  combat.updateBullets(state, dt);
+  combat.updateEnemies(state, dt);
+  combat.updatePickups(state, dt);
+  combat.checkPackages(state);
+  updateMissions(state, dt);
+  updateTaxi(state, dt);
+  updateParticles(state, dt);
+  updateCamera(dt);
+  state.objective = objectiveText(state);
+  state.waypoint = waypoint(state);
+  state.marker = missionMarker(state);
+  computePrompt();
+  state.audio.setSiren(state.wanted.stars >= 2, state.time);
+  if (state.player.dead && state.screen === 'play') {
+    state.screen = 'wasted';
+    state.audio.fail();
+    announce('Wasted. Press Enter to wake up at the hospital.');
   }
 }
 
-function hasSave() {
-  return loadSave() !== null;
+function respawn(kind) {
+  const p = state.player;
+  p.dead = false;
+  p.hp = 100;
+  p.inCar = null;
+  p.weapon = 'fists';
+  if (kind === 'busted') {
+    p.x = 1200;
+    p.y = 560;
+    p.cash = Math.floor(p.cash * 0.85);
+    state.wanted.heat = 0;
+    state.wanted.stars = 0;
+    if (state.mission.active) failMission(state, 'Busted by the police');
+  } else {
+    p.x = 1200;
+    p.y = 1840;
+    p.cash = Math.floor(p.cash * 0.9);
+    state.wanted.heat = 0;
+    state.wanted.stars = 0;
+    if (state.mission.active) failMission(state, 'Wasted on the streets');
+  }
+  state.cops = [];
+  for (const car of state.cars) {
+    if (car.driver === 'police') car.driver = 'traffic';
+  }
+  state.camera.x = p.x;
+  state.camera.y = p.y;
+  state.screen = 'play';
+  saveGame();
 }
 
-// --- Screens ---------------------------------------------------------------
+function startNewGame() {
+  const fresh = createState(Math.floor(Math.random() * 4294967296));
+  Object.keys(fresh).forEach((k) => {
+    state[k] = fresh[k];
+  });
+  state.audio = createAudio();
+  state.combat = combat;
+  state.screen = 'play';
+  state.audio.unlock();
+  state.audio.startMusic();
+  announce('Playing. Steal a car, reach the gold M, and take the first job.');
+}
+
+function continueGame() {
+  if (loadSave()) {
+    state.screen = 'play';
+    state.audio.unlock();
+    state.audio.startMusic();
+    announce('Welcome back to Solmar.');
+  }
+}
+
 function drawTitle() {
-  drawWorld(ctx, G);
-  ctx.fillStyle = 'rgba(5,8,24,0.55)';
-  ctx.fillRect(0, 0, 1280, 720);
+  const cx = VIEW_W / 2;
+  ctx.save();
+  ctx.fillStyle = 'rgba(8, 10, 18, 0.55)';
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#ffd24d';
-  ctx.font = 'bold 84px system-ui, sans-serif';
-  ctx.fillText('SOLMAR HEAT', 640, 220);
+  ctx.fillStyle = '#ffd23c';
+  ctx.font = 'bold 15px system-ui, sans-serif';
+  ctx.fillText('ALDERRA  ·  A SUN-SOAKED COASTAL CITY', cx, 150);
   ctx.fillStyle = '#fff';
-  ctx.font = '24px system-ui, sans-serif';
-  ctx.fillText('An open-world crime story — sun, streets and trouble.', 640, 262);
-  ctx.font = '16px system-ui, sans-serif';
-  ctx.fillStyle = '#cfe8ff';
-  ctx.fillText('Rae "Rook" Calloway is back in Solmar. Marlowe owns his debt. The city owns everything else.', 640, 292);
-
-  const items = ['New Game', hasSave() ? 'Continue' : 'Continue (no save yet)', 'How to Play'];
-  for (let i = 0; i < items.length; i++) {
-    const y = 380 + i * 56;
-    const sel = G.titleSel === i;
-    ctx.fillStyle = sel ? '#ffd24d' : 'rgba(255,255,255,0.85)';
-    ctx.font = (sel ? 'bold ' : '') + '26px system-ui, sans-serif';
-    if (sel) {
-      ctx.fillStyle = 'rgba(255,210,77,0.18)';
-      ctx.fillRect(440, y - 32, 400, 44);
-      ctx.fillStyle = '#ffd24d';
-    }
-    ctx.fillText(items[i], 640, y);
-  }
-  ctx.fillStyle = '#9aa0b0';
-  ctx.font = '15px system-ui, sans-serif';
-  ctx.fillText('WASD move · E steal car · Space punch · Mouse aim + click shoot · P pause · M mute', 640, 580);
-  ctx.fillText('A wholly original game. Not affiliated with any commercial title.', 640, 610);
+  ctx.font = 'bold 84px system-ui, sans-serif';
+  ctx.fillText('SOLMAR HEAT', cx, 240);
+  ctx.fillStyle = '#ffb347';
+  ctx.font = 'bold 20px system-ui, sans-serif';
+  ctx.fillText('Rook Calloway is back — and Marlowe wants his money.', cx, 278);
+  const items = ['New Game', state.saveExists ? 'Continue' : null, 'How to Play'].filter(Boolean);
+  state.menuRects = [];
+  items.forEach((label, i) => {
+    const y = 340 + i * 56;
+    const selected = state.titleMenu === i;
+    ctx.fillStyle = selected ? 'rgba(255,210,60,0.92)' : 'rgba(12,16,22,0.92)';
+    ctx.beginPath();
+    ctx.roundRect(cx - 170, y - 24, 340, 44, 8);
+    ctx.fill();
+    ctx.fillStyle = selected ? '#111' : '#fff';
+    ctx.font = 'bold 19px system-ui, sans-serif';
+    ctx.fillText(label, cx, y + 6);
+    state.menuRects.push({ x: cx - 170, y: y - 24, w: 340, h: 44, i });
+  });
+  ctx.fillStyle = 'rgba(255,255,255,0.75)';
+  ctx.font = '13px system-ui, sans-serif';
+  ctx.fillText('WASD move · Shift sprint · Mouse aim · Click shoot · Space punch · E enter / steal car · R reload · P pause · M mute', cx, 560);
+  ctx.fillText('8 story missions · taxi fares · 10 hidden packages · wanted level 0–5 stars', cx, 586);
+  ctx.fillText('An original game. Not affiliated with any commercial game series.', cx, 640);
+  ctx.textAlign = 'left';
+  ctx.restore();
 }
 
 function drawHowTo() {
-  drawWorld(ctx, G);
-  ctx.fillStyle = 'rgba(5,8,24,0.78)';
-  ctx.fillRect(0, 0, 1280, 720);
+  ctx.save();
+  ctx.fillStyle = 'rgba(8, 10, 18, 0.88)';
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+  ctx.fillStyle = '#ffd23c';
+  ctx.font = 'bold 34px system-ui, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#ffd24d';
-  ctx.font = 'bold 40px system-ui, sans-serif';
-  ctx.fillText('HOW TO PLAY', 640, 90);
+  ctx.fillText('HOW TO PLAY', VIEW_W / 2, 90);
   ctx.fillStyle = '#fff';
-  ctx.font = '19px system-ui, sans-serif';
-  ctx.textAlign = 'left';
+  ctx.font = '17px system-ui, sans-serif';
   const lines = [
     'Move: WASD / arrows — Sprint: Shift — Punch: Space',
-    'Aim with the mouse, click to shoot (pistol: click, SMG: hold).',
-    'E: enter or steal a car. Drive with WASD. E again to get out.',
-    '1 / 2 / 3: fists / pistol / SMG. R: reload. T: taxi fares (in a taxi).',
-    'Crimes raise your wanted level. Cops chase, ram and grab you.',
-    'Busted: you wake at the police station, $200 lighter.',
-    'Wasted: you wake at Solmar General, $300 lighter.',
-    'Missions: press Enter to start the next job. Gold marker = objective.',
-    'Collect 10 hidden packages for a $2,000 bonus. Progress saves.',
-    'P / Esc: pause. M: mute. The game saves when you pause.',
+    'Aim with the mouse, click to shoot — R reloads — 1/2/3 switch weapons',
+    'E: enter a car, steal one with a driver, or exit your car',
+    'Crimes raise your wanted level. Cops chase on foot and in cruisers.',
+    'At 3 stars the heat is serious; at 5 stars Solmar wants you gone.',
+    'Gold M on the map starts the next story mission. Gold diamonds mark objectives.',
+    'Taxi fares appear while you drive with no mission active — green $ on the map.',
+    '10 hidden packages are scattered around Solmar — each pays $250.',
+    'Progress saves to this browser. P pauses, M mutes, Esc quits to the title.',
   ];
-  lines.forEach((l, i) => ctx.fillText(l, 240, 150 + i * 42));
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#ffd24d';
-  ctx.font = 'bold 22px system-ui, sans-serif';
-  ctx.fillText('Press Esc or Enter to go back', 640, 620);
+  lines.forEach((line, i) => ctx.fillText(line, VIEW_W / 2, 150 + i * 40));
+  ctx.fillStyle = '#ffd23c';
+  ctx.font = 'bold 16px system-ui, sans-serif';
+  ctx.fillText('Press Enter or Esc to go back', VIEW_W / 2, 560);
+  ctx.textAlign = 'left';
+  ctx.restore();
 }
 
 function drawPause() {
-  drawWorld(ctx, G);
-  drawHUD(ctx, G);
-  ctx.fillStyle = 'rgba(5,8,24,0.6)';
-  ctx.fillRect(0, 0, 1280, 720);
+  ctx.save();
+  ctx.fillStyle = 'rgba(8, 10, 18, 0.7)';
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
   ctx.textAlign = 'center';
   ctx.fillStyle = '#fff';
-  ctx.font = 'bold 44px system-ui, sans-serif';
-  ctx.fillText('PAUSED', 640, 200);
-  const items = ['Resume', 'Save Game', 'How to Play', 'Quit to Title'];
-  for (let i = 0; i < items.length; i++) {
-    const y = 300 + i * 52;
-    const sel = G.pauseSel === i;
-    ctx.fillStyle = sel ? '#ffd24d' : 'rgba(255,255,255,0.85)';
-    ctx.font = (sel ? 'bold ' : '') + '26px system-ui, sans-serif';
-    ctx.fillText(items[i], 640, y);
-  }
-  ctx.fillStyle = '#9aa0b0';
-  ctx.font = '15px system-ui, sans-serif';
-  ctx.fillText('Cash ' + fmtCash(G.player.cash) + ' · Missions done ' + G.stats.missionsDone + '/8 · Fares ' + G.stats.fares, 640, 540);
+  ctx.font = 'bold 40px system-ui, sans-serif';
+  ctx.fillText('PAUSED', VIEW_W / 2, 200);
+  const items = ['Resume', state.audio.muted ? 'Unmute (M)' : 'Mute (M)', 'Save & quit to title'];
+  state.menuRects = [];
+  items.forEach((label, i) => {
+    const y = 280 + i * 56;
+    const selected = state.pauseMenu === i;
+    ctx.fillStyle = selected ? 'rgba(255,210,60,0.92)' : 'rgba(12,16,22,0.92)';
+    ctx.beginPath();
+    ctx.roundRect(VIEW_W / 2 - 170, y - 24, 340, 44, 8);
+    ctx.fill();
+    ctx.fillStyle = selected ? '#111' : '#fff';
+    ctx.font = 'bold 19px system-ui, sans-serif';
+    ctx.fillText(label, VIEW_W / 2, y + 6);
+    state.menuRects.push({ x: VIEW_W / 2 - 170, y: y - 24, w: 340, h: 44, i });
+  });
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.font = '14px system-ui, sans-serif';
+  const p = state.player;
+  ctx.fillText(`Cash $${p.cash.toLocaleString('en-US')}  ·  Missions done ${state.stats.missionsDone}/8  ·  Packages ${state.stats.packages}/10`, VIEW_W / 2, 500);
+  ctx.textAlign = 'left';
+  ctx.restore();
 }
 
 function drawEndScreen(kind) {
-  drawWorld(ctx, G);
-  ctx.fillStyle = 'rgba(10,0,0,0.72)';
-  ctx.fillRect(0, 0, 1280, 720);
+  ctx.save();
+  ctx.fillStyle = 'rgba(8, 10, 18, 0.8)';
+  ctx.fillRect(0, 0, VIEW_W, VIEW_H);
   ctx.textAlign = 'center';
-  if (kind === 'busted') {
-    ctx.fillStyle = '#6aa8ff';
-    ctx.font = 'bold 76px system-ui, sans-serif';
-    ctx.fillText('BUSTED', 640, 300);
-    ctx.fillStyle = '#fff';
-    ctx.font = '22px system-ui, sans-serif';
-    ctx.fillText('The Solmar PD picked you up. $200 lighter, back on the street.', 640, 350);
-  } else if (kind === 'wasted') {
-    ctx.fillStyle = '#ff5555';
-    ctx.font = 'bold 76px system-ui, sans-serif';
-    ctx.fillText('WASTED', 640, 300);
-    ctx.fillStyle = '#fff';
-    ctx.font = '22px system-ui, sans-serif';
-    ctx.fillText('Solmar General patched you up. $300 lighter — and the job still waits.', 640, 350);
-  } else {
-    ctx.fillStyle = '#ffd24d';
-    ctx.font = 'bold 64px system-ui, sans-serif';
-    ctx.fillText('KING OF SOLMAR', 640, 280);
-    ctx.fillStyle = '#fff';
-    ctx.font = '22px system-ui, sans-serif';
-    ctx.fillText('The debt is settled. The city is yours, Rook.', 640, 330);
-    ctx.fillText('Missions 8/8 · Cash ' + fmtCash(G.player.cash) + ' · Kills ' + G.stats.kills, 640, 370);
-  }
-  ctx.fillStyle = '#ffd24d';
-  ctx.font = 'bold 22px system-ui, sans-serif';
-  ctx.fillText('Press Enter to continue', 640, 440);
+  ctx.fillStyle = kind === 'busted' ? '#3d7ad9' : '#d9382b';
+  ctx.font = 'bold 72px system-ui, sans-serif';
+  ctx.fillText(kind === 'busted' ? 'BUSTED' : 'WASTED', VIEW_W / 2, 300);
+  ctx.fillStyle = '#fff';
+  ctx.font = '18px system-ui, sans-serif';
+  ctx.fillText(
+    kind === 'busted'
+      ? 'The Solmar PD hauled you in. You lost 15% of your cash and your guns.'
+      : 'Rook went down. The hospital patched you up — for 10% of your cash.',
+    VIEW_W / 2, 350,
+  );
+  ctx.fillStyle = '#ffd23c';
+  ctx.font = 'bold 16px system-ui, sans-serif';
+  ctx.fillText('Press Enter to get back out there', VIEW_W / 2, 400);
+  ctx.textAlign = 'left';
+  ctx.restore();
 }
 
-function titleClick(my) {
-  const items = [380, 436, 492];
-  for (let i = 0; i < items.length; i++) {
-    if (Math.abs(my - items[i]) < 26) return i;
+function draw() {
+  ctx.clearRect(0, 0, VIEW_W, VIEW_H);
+  drawWorld(ctx, state);
+  if (state.screen === 'title') drawTitle();
+  else if (state.screen === 'howto') drawHowTo();
+  else if (state.screen === 'paused') {
+    drawHUD(ctx, state);
+    drawPause();
+  } else if (state.screen === 'busted') drawEndScreen('busted');
+  else if (state.screen === 'wasted') drawEndScreen('wasted');
+  else drawHUD(ctx, state);
+}
+
+function menuClick(x, y) {
+  for (const r of state.menuRects) {
+    if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return r.i;
   }
   return -1;
 }
 
-function pauseClick(my) {
-  const items = [300, 352, 404, 456];
-  for (let i = 0; i < items.length; i++) {
-    if (Math.abs(my - items[i]) < 24) return i;
+function runShot(name) {
+  stageShot(name, state);
+  let painted = 0;
+  function paint() {
+    updateCamera(0.016);
+    draw();
+    painted += 1;
+    if (painted < 2) requestAnimationFrame(paint);
+    else window.__shotReady = true;
   }
-  return -1;
+  requestAnimationFrame(paint);
 }
 
-// --- Update ----------------------------------------------------------------
-function update(dt) {
-  G.time += dt;
-  G.clock = (G.clock + dt * (86400 / TUNING.dayLength)) % 86400;
-  if (G.messageTimer > 0) G.messageTimer -= dt;
-  if (G.missionCard && G.missionCard.timer > 0) G.missionCard.timer -= dt;
-  if (G.heatLock > 0) {
-    G.heatLock -= dt;
-    if (G.heatLock <= 0) G.heat = Math.min(G.heat, 40);
-  }
+function runGame() {
+  const input = createInput(canvas);
+  let accumulator = 0;
+  let last = performance.now();
+  let prevSpace = false;
 
-  // Mouse position in world coordinates.
-  input.mouse.wx = G.camera.x + input.mouse.x;
-  input.mouse.wy = G.camera.y + input.mouse.y;
+  announce('Solmar Heat. Press Enter or click to start.');
 
-  if (G.screen === 'title') {
-    // Slow attract pan across downtown.
-    G.camera.x = 1920 - 640 + Math.sin(G.time * 0.05) * 300;
-    G.camera.y = 1140 - 360 + Math.cos(G.time * 0.04) * 120;
-    if (input.anyPressed(KEYS.up) || input.anyPressed(['ArrowUp'])) G.titleSel = (G.titleSel + 2) % 3;
-    if (input.anyPressed(KEYS.down) || input.anyPressed(['ArrowDown'])) G.titleSel = (G.titleSel + 1) % 3;
-    if (input.mouse.clicked) {
-      const hit = titleClick(input.mouse.y);
-      if (hit >= 0) G.titleSel = hit;
+  function handleActions() {
+    const { bits, clicked } = input.takeActions();
+    const mx = input.mouse.x;
+    const my = input.mouse.y;
+    if (bits & ACTION_MUTE) {
+      const muted = state.audio.toggleMute();
+      announce(muted ? 'Muted.' : 'Sound on.');
     }
-    const confirm = input.wasPressed('Enter') || (input.mouse.clicked && titleClick(input.mouse.y) >= 0);
-    if (confirm) {
-      audio.init();
-      audio.startMusic();
-      if (G.titleSel === 0) {
-        G = newGame(null);
-        window.__game = G;
-        G.screen = 'play';
-        startMission(G, 0);
-      } else if (G.titleSel === 1 && hasSave()) {
-        G = newGame(loadSave());
-        window.__game = G;
-        G.screen = 'play';
-        if (G.missionIndex < 8) startMission(G, G.missionIndex);
-      } else if (G.titleSel === 2) {
-        G.screen = 'howto';
+    if (state.screen === 'title') {
+      if (bits & ACTION_CONFIRM && !clicked) {
+        const items = ['New Game', state.saveExists ? 'Continue' : null, 'How to Play'].filter(Boolean);
+        const choice = items[state.titleMenu];
+        if (choice === 'New Game') startNewGame();
+        else if (choice === 'Continue') continueGame();
+        else if (choice === 'How to Play') state.screen = 'howto';
+        return;
       }
-      audio.sfx('click');
-    }
-    return;
-  }
-
-  if (G.screen === 'howto') {
-    if (input.wasPressed('Enter') || input.wasPressed('Escape')) G.screen = 'title';
-    return;
-  }
-
-  if (G.screen === 'pause') {
-    if (input.anyPressed(KEYS.up)) G.pauseSel = (G.pauseSel + 3) % 4;
-    if (input.anyPressed(KEYS.down)) G.pauseSel = (G.pauseSel + 1) % 4;
-    if (input.mouse.clicked) {
-      const hit = pauseClick(input.mouse.y);
-      if (hit >= 0) G.pauseSel = hit;
-    }
-    const confirm = input.wasPressed('Enter') || (input.mouse.clicked && pauseClick(input.mouse.y) >= 0);
-    if (input.anyPressed(KEYS.pause) && !confirm) {
-      G.screen = 'play';
-    } else if (confirm) {
-      if (G.pauseSel === 0) G.screen = 'play';
-      if (G.pauseSel === 1) {
-        saveGame();
-        G.message = 'Game saved.';
-        G.messageTimer = 2;
-        G.screen = 'play';
+      if (input.isDown('ArrowUp') && !handleActions._up) state.titleMenu = Math.max(0, state.titleMenu - 1);
+      if (input.isDown('ArrowDown') && !handleActions._down) {
+        const n = (state.saveExists ? 3 : 2);
+        state.titleMenu = Math.min(n - 1, state.titleMenu + 1);
       }
-      if (G.pauseSel === 2) G.screen = 'howto-pause';
-      if (G.pauseSel === 3) {
-        saveGame();
-        G.screen = 'title';
+      handleActions._up = input.isDown('ArrowUp');
+      handleActions._down = input.isDown('ArrowDown');
+      if (clicked) {
+        const hit = menuClick(mx, my);
+        if (hit >= 0) {
+          state.titleMenu = hit;
+          const items = ['New Game', state.saveExists ? 'Continue' : null, 'How to Play'].filter(Boolean);
+          const choice = items[hit];
+          if (choice === 'New Game') startNewGame();
+          else if (choice === 'Continue') continueGame();
+          else if (choice === 'How to Play') state.screen = 'howto';
+        }
+      }
+      return;
+    }
+    if (state.screen === 'howto') {
+      if (bits & (ACTION_CONFIRM | ACTION_PAUSE)) state.screen = 'title';
+      return;
+    }
+    if (state.screen === 'paused') {
+      if (bits & ACTION_PAUSE) {
+        state.screen = 'play';
+        announce('Playing.');
+        return;
+      }
+      if (bits & ACTION_CONFIRM && !clicked) {
+        if (state.pauseMenu === 0) state.screen = 'play';
+        else if (state.pauseMenu === 1) state.audio.toggleMute();
+        else if (state.pauseMenu === 2) {
+          saveGame();
+          state.screen = 'title';
+        }
+        return;
+      }
+      if (input.isDown('ArrowUp') && !handleActions._up) state.pauseMenu = Math.max(0, state.pauseMenu - 1);
+      if (input.isDown('ArrowDown') && !handleActions._down) state.pauseMenu = Math.min(2, state.pauseMenu + 1);
+      handleActions._up = input.isDown('ArrowUp');
+      handleActions._down = input.isDown('ArrowDown');
+      if (clicked) {
+        const hit = menuClick(mx, my);
+        if (hit === 0) state.screen = 'play';
+        else if (hit === 1) state.audio.toggleMute();
+        else if (hit === 2) {
+          saveGame();
+          state.screen = 'title';
+        }
+      }
+      return;
+    }
+    if (state.screen === 'busted' || state.screen === 'wasted') {
+      if (bits & ACTION_CONFIRM) respawn(state.screen);
+      return;
+    }
+    // Play screen.
+    if (bits & ACTION_PAUSE) {
+      state.screen = 'paused';
+      state.pauseMenu = 0;
+      announce('Paused.');
+      return;
+    }
+    if (bits & ACTION_INTERACT) {
+      const p = state.player;
+      const marker = missionMarker(state);
+      if (!state.mission.active && marker && Math.hypot(p.x - marker.x, p.y - marker.y) < 110) {
+        startMission(state, state.mission.idx);
+      } else if (p.inCar) {
+        exitCar(state);
+      } else {
+        const car = nearestCar(state, p.x, p.y, 80);
+        if (car) enterCar(state, car);
       }
     }
-    return;
+    if (bits & ACTION_RELOAD) combat.reload(state);
+    if (input.isDown('Digit1')) state.player.weapon = 'fists';
+    if (input.isDown('Digit2')) state.player.weapon = 'pistol';
+    if (input.isDown('Digit3') && state.hasSmg) state.player.weapon = 'smg';
+    // Space edge = punch (fists) when on foot.
+    const space = input.isDown('Space');
+    if (space && !prevSpace && !state.player.inCar && state.player.weapon === 'fists') {
+      const p = state.player;
+      const cam = state.camera;
+      const wx = cam.x + input.mouse.x - VIEW_W / 2;
+      const wy = cam.y + input.mouse.y - VIEW_H / 2;
+      combat.fireWeapon(state, p, wx, wy);
+    }
+    prevSpace = space;
+    // Mouse held = shoot toward the cursor (on foot only).
+    if (input.mouse.down && !state.player.inCar) {
+      const p = state.player;
+      const cam = state.camera;
+      const wx = cam.x + input.mouse.x - VIEW_W / 2;
+      const wy = cam.y + input.mouse.y - VIEW_H / 2;
+      combat.fireWeapon(state, p, wx, wy);
+    }
   }
 
-  if (G.screen === 'howto-pause') {
-    if (input.wasPressed('Enter') || input.wasPressed('Escape')) G.screen = 'pause';
-    return;
-  }
-
-  if (G.screen === 'busted' || G.screen === 'wasted') {
-    if (input.wasPressed('Enter')) {
-      if (G.screen === 'busted') respawnAfterBusted(G);
-      else respawnAfterWasted(G);
-      if (G.mission && G.mission.failed) {
-        startMission(G, G.mission.index);
+  function frame(now) {
+    requestAnimationFrame(frame);
+    accumulator += Math.min((now - last) / 1000, MAX_FRAME);
+    last = now;
+    handleActions();
+    if (state.screen === 'title' || state.screen === 'howto') {
+      // Ambient city life behind the menus.
+      while (accumulator >= STEP) {
+        state.time += STEP;
+        state.clock = (state.clock + STEP / 60) % 24;
+        updateCars(state, STEP);
+        updatePeds(state, STEP);
+        updateParticles(state, STEP);
+        updateCamera(STEP);
+        accumulator -= STEP;
       }
+      accumulator = 0;
+    } else if (state.screen === 'play') {
+      while (accumulator >= STEP) {
+        updateWorld(STEP, input);
+        accumulator -= STEP;
+        if (state.screen !== 'play') break;
+      }
+    } else {
+      accumulator = 0;
     }
-    return;
+    draw();
   }
 
-  if (G.screen === 'win') {
-    if (input.wasPressed('Enter')) {
-      G.screen = 'play'; // free roam after the finale
-      G.mission = null;
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && state.screen === 'play') {
+      state.screen = 'paused';
+      state.pauseMenu = 0;
+      announce('Paused.');
     }
-    return;
-  }
+  });
 
-  if (G.screen !== 'play') return;
+  // First user gesture unlocks audio.
+  window.addEventListener('pointerdown', () => state.audio.unlock(), { once: true });
+  window.addEventListener('keydown', () => state.audio.unlock(), { once: true });
 
-  // --- Play ---
-  if (input.anyPressed(KEYS.pause)) {
-    saveGame();
-    G.screen = 'pause';
-    return;
-  }
-  if (input.anyPressed(KEYS.mute)) {
-    const m = audio.toggleMute();
-    G.message = m ? 'Muted' : 'Sound on';
-    G.messageTimer = 1.5;
-  }
-  // Start / retry missions with Enter.
-  if (input.wasPressed('Enter')) {
-    if (G.mission && G.mission.failed) {
-      startMission(G, G.mission.index);
-    } else if (!G.mission && G.missionIndex < MISSIONS.length) {
-      startMission(G, G.missionIndex);
-    }
-  }
-  // Engine hum follows driving.
-  if (G.player.inCar) audio.setEngine(true, Math.abs(G.player.speed) / 400);
-  else audio.setEngine(false, 0);
-
-  updatePlayer(G, dt, input);
-  updateCombat(G, dt, input);
-  updatePeds(G, dt);
-  updateTraffic(G, dt);
-  updateCops(G, dt);
-  updateMission(G, dt);
-  updateTaxi(G, dt);
-
-  // Particles.
-  for (let i = G.particles.length - 1; i >= 0; i--) {
-    const pt = G.particles[i];
-    pt.x += pt.vx * dt;
-    pt.y += pt.vy * dt;
-    pt.vx *= 0.985;
-    pt.vy *= 0.985;
-    pt.life -= dt;
-    if (pt.life <= 0) G.particles.splice(i, 1);
-  }
-  // Skid marks fade.
-  for (const car of G.cars) {
-    if (!car.skid) continue;
-    for (const s of car.skid) s.life -= dt;
-    car.skid = car.skid.filter((s) => s.life > 0);
-  }
-
-  // Autosave every 30 s of play.
-  G.saveTimer += dt;
-  if (G.saveTimer > 30) {
-    G.saveTimer = 0;
-    saveGame();
-  }
-
-  // Mission failed overlay is handled by the HUD text; the player retries
-  // with Enter (see above).
-  if (G.mission && G.mission.failed && G.missionFailReason) {
-    G.message = 'Mission failed: ' + G.missionFailReason + ' — Enter to retry';
-    G.messageTimer = Math.max(G.messageTimer, 0.5);
-  }
-}
-
-// --- Render ----------------------------------------------------------------
-function render() {
-  ctx.clearRect(0, 0, 1280, 720);
-  switch (G.screen) {
-    case 'title':
-      drawTitle();
-      break;
-    case 'howto':
-    case 'howto-pause':
-      drawHowTo();
-      break;
-    case 'pause':
-      drawPause();
-      break;
-    case 'busted':
-      drawEndScreen('busted');
-      break;
-    case 'wasted':
-      drawEndScreen('wasted');
-      break;
-    case 'win':
-      drawEndScreen('win');
-      break;
-    default:
-      drawWorld(ctx, G);
-      drawHUD(ctx, G);
-      break;
-  }
-  if (G.screen === 'play' && G.mission && G.mission.failed) {
-    ctx.textAlign = 'center';
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(340, 300, 600, 80);
-    ctx.fillStyle = '#ff6666';
-    ctx.font = 'bold 24px system-ui, sans-serif';
-    ctx.fillText('MISSION FAILED', 640, 330);
-    ctx.fillStyle = '#fff';
-    ctx.font = '17px system-ui, sans-serif';
-    ctx.fillText(G.missionFailReason + ' — press Enter to retry', 640, 360);
-  }
-}
-
-// --- Fixed-step loop --------------------------------------------------------
-let last = performance.now();
-let acc = 0;
-let frames = 0;
-
-function frame(now) {
-  const elapsed = Math.min((now - last) / 1000, 0.25);
-  last = now;
-  acc += elapsed;
-  let steps = 0;
-  while (acc >= STEP && steps < 5) {
-    try {
-      update(STEP);
-    } catch (e) {
-      // One bad update must never freeze the game: log it and keep
-      // running so the player can keep playing (and the error stays
-      // visible in the console for debugging).
-      console.error('update failed:', e);
-    }
-    input.endStep();
-    acc -= STEP;
-    steps++;
-  }
-  if (steps === 5) acc = 0;
-  render();
-  frames++;
-  if (frames === 2 && shotName) {
-    window.__shotReady = true;
-  }
   requestAnimationFrame(frame);
 }
 
-// Stage a screenshot scene before the first frame.
-if (shotName) {
-  stageShot(G, shotName);
-  // Keep the staged scene still for the shot: freeze play updates by
-  // rendering the title-screen backdrop only for 'start'.
-  if (shotName === 'start') G.screen = 'title';
-}
-
-document.getElementById('status').textContent =
-  'Solmar Heat — ' + (shotName ? 'shot: ' + shotName : 'press Enter on the title screen to play');
-requestAnimationFrame(frame);
+if (shot) runShot(shot);
+else runGame();

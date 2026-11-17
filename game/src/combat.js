@@ -1,351 +1,304 @@
-// Combat: weapons, bullets, damage, enemy AI and pickups.
-import { WEAPONS, TUNING } from './config.js';
-import { range, dist, angleTo, clamp } from './random.js';
-import { collidesBuilding, resolveCircle, isWater } from './city.js';
-import { burst, addHeat, hurtPlayer, killPed, explodeCar } from './entities.js';
+// Combat: player weapons, enemy AI, bullets, pickups and damage.
+// Enemies are the Harbor Kings crew and corrupt cops; peds are never targets.
+import { WEAPONS } from './config.js';
+import { addHeat, damagePlayer, explodeCar, moveCircle, spawnSmoke } from './entities.js';
+import { collides } from './city.js';
 
-export function fireWeapon(G) {
-  const p = G.player;
-  const w = WEAPONS[p.weapon];
-  if (p.fireCooldown > 0 || p.reloadTimer > 0) return;
-  if (p.inCar) return; // no drive-by in this build; shoot on foot
-  p.fireCooldown = w.rate;
-  G.lastShotAt = G.time;
-  G.lastShotX = p.x;
-  G.lastShotY = p.y;
-
-  if (w.melee) {
-    G.audio.sfx('punch');
-    const hx = p.x + Math.cos(p.angle) * 34;
-    const hy = p.y + Math.sin(p.angle) * 34;
-    burst(G, hx, hy, 4, '#ffffff', 60, 0.25);
-    // Hit whatever is in front: ped, cop, enemy.
-    for (const ped of G.peds) {
-      if (!ped.dead && dist(ped.x, ped.y, hx, hy) < 34) damagePed(G, ped, w.damage);
+export const combat = {
+  fireWeapon(state, shooter, tx, ty) {
+    const p = state.player;
+    const weapon = WEAPONS[p.weapon];
+    if (!weapon || p.fireCd > 0) return false;
+    if (p.weapon !== 'fists') {
+      if (p.mag[p.weapon] <= 0) {
+        // Dry click: auto-reload if there is reserve ammo.
+        if (p.ammo[p.weapon] > 0) this.reload(state);
+        return false;
+      }
+      p.mag[p.weapon] -= 1;
     }
-    for (const cop of G.cops) {
-      if (cop.kind === 'foot' && dist(cop.x, cop.y, hx, hy) < 34) damageCop(G, cop, w.damage);
+    p.fireCd = weapon.rate;
+    const angle = Math.atan2(ty - shooter.y, tx - shooter.x);
+    if (p.weapon === 'fists') {
+      p.punchCd = weapon.rate;
+      state.audio.punch();
+      this.meleeHit(state, shooter, angle);
+      return true;
     }
-    for (const e of G.enemies) {
-      if (e.hp > 0 && dist(e.x, e.y, hx, hy) < 34) damageEnemy(G, e, w.damage);
+    const spread = (Math.random() - 0.5) * 2 * weapon.spread;
+    const a = angle + spread;
+    state.bullets.push({
+      x: shooter.x + Math.cos(angle) * 26, y: shooter.y + Math.sin(angle) * 26,
+      vx: Math.cos(a) * weapon.speed, vy: Math.sin(a) * weapon.speed,
+      life: weapon.range / weapon.speed, damage: weapon.damage, from: 'player',
+    });
+    state.muzzle = { x: shooter.x + Math.cos(angle) * 30, y: shooter.y + Math.sin(angle) * 30, t: 0.06 };
+    state.lastShot = { x: shooter.x, y: shooter.y };
+    state.audio.shot(p.weapon);
+    if (state.wanted.heat < 10) addHeat(state, 4);
+    return true;
+  },
+
+  meleeHit(state, shooter, angle) {
+    const hit = (ent, radius) => {
+      const dx = ent.x - shooter.x;
+      const dy = ent.y - shooter.y;
+      const d = Math.hypot(dx, dy);
+      if (d > WEAPONS.fists.range + radius) return false;
+      const dot = (dx * Math.cos(angle) + dy * Math.sin(angle)) / (d || 1);
+      return dot > 0.3;
+    };
+    for (const e of state.enemies) {
+      if (e.hp > 0 && hit(e, 16)) this.damageEnemy(state, e, WEAPONS.fists.damage, shooter);
     }
-    addHeat(G, 1, 'Fight');
-    return;
-  }
-
-  const ammoKey = w.ammo;
-  if (p.ammo[ammoKey] <= 0) {
-    G.audio.sfx('click');
-    reloadWeapon(G);
-    return;
-  }
-  p.ammo[ammoKey]--;
-  const a = p.angle + range(G.rng, -w.spread, w.spread);
-  G.bullets.push({
-    x: p.x + Math.cos(p.angle) * 26,
-    y: p.y + Math.sin(p.angle) * 26,
-    vx: Math.cos(a) * w.speed,
-    vy: Math.sin(a) * w.speed,
-    life: w.range / w.speed,
-    damage: w.damage,
-    from: 'player',
-  });
-  burst(G, p.x + Math.cos(p.angle) * 30, p.y + Math.sin(p.angle) * 30, 3, '#ffd24d', 120, 0.12);
-  G.audio.sfx('shot');
-  G.camera.shake = Math.min(G.camera.shake + 1.5, 6);
-  addHeat(G, TUNING.heatPerShot, 'Shots fired');
-}
-
-export function reloadWeapon(G) {
-  const p = G.player;
-  const w = WEAPONS[p.weapon];
-  if (w.melee || p.reloadTimer > 0) return;
-  if (p.ammo[w.ammo] <= 0) return;
-  p.reloadTimer = 0.7;
-  G.audio.sfx('reload');
-}
-
-export function damagePed(G, ped, dmg) {
-  ped.hp -= dmg;
-  burst(G, ped.x, ped.y, 6, '#cc3333', 80, 0.5);
-  if (ped.hp <= 0) {
-    killPed(G, ped, false);
-    addHeat(G, TUNING.heatPerKill, 'Pedestrian killed');
-  } else {
-    ped.state = 'flee';
-    ped.panic = 3;
-  }
-}
-
-export function damageCop(G, cop, dmg) {
-  cop.hp -= dmg;
-  burst(G, cop.x, cop.y, 6, '#3366cc', 80, 0.5);
-  G.audio.sfx('hit');
-  if (cop.hp <= 0) {
-    addHeat(G, TUNING.heatPerCopKill, 'Cop down');
-    G.stats.kills++;
-    if (cop.kind === 'cruiser' && cop.car) {
-      cop.car.driver = 'none';
-      cop.car.speed = 0;
+    for (const c of state.cops) {
+      if (c.hp > 0 && hit(c, 14)) {
+        c.hp -= WEAPONS.fists.damage;
+        state.audio.hit();
+        if (c.hp <= 0) {
+          addHeat(state, 25);
+          state.stats.copsDown += 1;
+        }
+      }
     }
-  }
-}
-
-export function damageEnemy(G, e, dmg) {
-  e.hp -= dmg;
-  burst(G, e.x, e.y, 6, '#ff5533', 80, 0.5);
-  G.audio.sfx('hit');
-  if (e.hp <= 0) {
-    e.dead = true;
-    G.stats.kills++;
-    burst(G, e.x, e.y, 14, '#ff5533', 140, 0.8);
-    if (G.rng() < 0.4) spawnPickup(G, e.x, e.y, 'cash', 40);
-    if (G.rng() < 0.25) spawnPickup(G, e.x, e.y, 'health', 25);
-  }
-}
-
-export function spawnEnemy(G, x, y, kind) {
-  // Never spawn inside a building — resolve out to open ground first.
-  const pos = resolveCircle(G.city.buildings, x, y, 13);
-  const e = {
-    x: pos.x, y: pos.y, angle: 0, hp: kind === 'boss' ? 220 : kind === 'heavy' ? 90 : 40,
-    kind: kind || 'goon', state: 'guard',
-    fireTimer: range(G.rng, 0.5, 1.5), moveTimer: 0,
-    speed: 120, dead: false, target: null,
-    // Fixed slide direction while advancing: an oscillating strafe averages
-    // to zero and leaves the enemy jittering against a wall forever.
-    strafeDir: G.rng() < 0.5 ? -1 : 1,
-  };
-  G.enemies.push(e);
-  return e;
-}
-
-export function spawnPickup(G, x, y, kind, amount) {
-  G.pickups.push({ x, y, kind, amount: amount || 0, bob: G.rng() * 6 });
-}
-
-export function updateBullets(G, dt) {
-  for (let i = G.bullets.length - 1; i >= 0; i--) {
-    const b = G.bullets[i];
-    b.life -= dt;
-    b.x += b.vx * dt;
-    b.y += b.vy * dt;
-    let dead = b.life <= 0;
-    if (!dead && collidesBuilding(G.city.buildings, b.x, b.y, 2)) {
-      burst(G, b.x, b.y, 4, '#ffcc66', 90, 0.3);
-      dead = true;
+    for (const ped of state.peds) {
+      if (hit(ped, 12)) {
+        ped.state = 'flee';
+        ped.fleeX = shooter.x;
+        ped.fleeY = shooter.y;
+        ped.fleeT = 4;
+        addHeat(state, 8);
+      }
     }
-    if (!dead) {
+  },
+
+  reload(state) {
+    const p = state.player;
+    const weapon = WEAPONS[p.weapon];
+    if (!weapon || p.weapon === 'fists') return;
+    const need = weapon.mag - p.mag[p.weapon];
+    const take = Math.min(need, p.ammo[p.weapon]);
+    if (take <= 0) return;
+    p.mag[p.weapon] += take;
+    p.ammo[p.weapon] -= take;
+    p.fireCd = Math.max(p.fireCd, 0.7);
+    state.audio.pickup();
+  },
+
+  enemyShoot(state, shooter) {
+    const p = state.player;
+    const dx = p.x - shooter.x;
+    const dy = p.y - shooter.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const spread = (Math.random() - 0.5) * 0.14;
+    const a = Math.atan2(dy, dx) + spread;
+    state.bullets.push({
+      x: shooter.x + Math.cos(a) * 26, y: shooter.y + Math.sin(a) * 26,
+      vx: Math.cos(a) * 900, vy: Math.sin(a) * 900,
+      life: 0.6, damage: 9, from: 'enemy',
+    });
+    state.muzzle = { x: shooter.x + Math.cos(a) * 30, y: shooter.y + Math.sin(a) * 30, t: 0.06 };
+    state.audio.shot('pistol');
+  },
+
+  spawnGoons(state, x, y, count, opts = {}) {
+    const made = [];
+    for (let i = 0; i < count; i++) {
+      const gx = x + (Math.random() - 0.5) * 260;
+      const gy = y + (Math.random() - 0.5) * 260;
+      if (collides(state.city, gx, gy, 16)) continue;
+      const e = {
+        id: state.nextId++, x: gx, y: gy, angle: 0, hp: opts.hp || 55,
+        speed: 165 + Math.random() * 30, state: 'advance', shootCd: 0.5 + Math.random(),
+        strafeDir: Math.random() < 0.5 ? 1 : -1, strafeT: 0, weapon: opts.weapon || 'pistol',
+        boss: !!opts.boss,
+      };
+      if (e.boss) e.hp = 320;
+      state.enemies.push(e);
+      made.push(e);
+    }
+    return made;
+  },
+
+  damageEnemy(state, e, dmg, shooter) {
+    e.hp -= dmg;
+    state.audio.hit();
+    state.particles.push({
+      x: e.x, y: e.y, vx: 0, vy: 0, life: 0.25, maxLife: 0.25, size: 8,
+      color: '#ff4040', kind: 'hit',
+    });
+    if (e.hp <= 0) {
+      state.stats.kills += 1;
+      state.stats.missionKills += 1;
+      if (Math.random() < 0.35) {
+        state.pickups.push({
+          x: e.x, y: e.y, kind: Math.random() < 0.5 ? 'health' : 'ammo', amount: 0, t: 0,
+        });
+      }
+      if (e.boss) {
+        state.audio.sting();
+        state.mission.data.bossDown = true;
+      }
+    }
+  },
+
+  updateBullets(state, dt) {
+    const p = state.player;
+    for (const b of state.bullets) {
+      b.life -= dt;
+      const nx = b.x + b.vx * dt;
+      const ny = b.y + b.vy * dt;
+      if (collides(state.city, nx, ny, 2)) {
+        b.life = 0;
+        state.particles.push({
+          x: nx, y: ny, vx: 0, vy: 0, life: 0.2, maxLife: 0.2, size: 5,
+          color: '#ffd23c', kind: 'spark',
+        });
+        continue;
+      }
+      b.x = nx;
+      b.y = ny;
       if (b.from === 'player') {
-        for (const ped of G.peds) {
-          if (!ped.dead && dist(ped.x, ped.y, b.x, b.y) < 14) {
-            damagePed(G, ped, b.damage);
-            dead = true;
+        let hitSomething = false;
+        for (const e of state.enemies) {
+          if (e.hp > 0 && Math.hypot(e.x - b.x, e.y - b.y) < 18) {
+            this.damageEnemy(state, e, b.damage, p);
+            hitSomething = true;
             break;
           }
         }
-        if (!dead) {
-          for (const cop of G.cops) {
-            if (cop.kind === 'foot' && dist(cop.x, cop.y, b.x, b.y) < 15) {
-              damageCop(G, cop, b.damage);
-              dead = true;
-              break;
-            }
-            if (cop.kind === 'cruiser' && cop.car && dist(cop.car.x, cop.car.y, b.x, b.y) < 24) {
-              cop.car.hp -= b.damage;
-              if (cop.car.hp <= 0) {
-                cop.hp = 0;
+        if (!hitSomething) {
+          for (const c of state.cops) {
+            if (c.hp > 0 && Math.hypot(c.x - b.x, c.y - b.y) < 16) {
+              c.hp -= b.damage;
+              state.audio.hit();
+              if (c.hp <= 0) {
+                addHeat(state, 25);
+                state.stats.copsDown += 1;
               }
-              dead = true;
+              hitSomething = true;
               break;
             }
           }
         }
-        if (!dead) {
-          for (const e of G.enemies) {
-            if (e.hp > 0 && dist(e.x, e.y, b.x, b.y) < 15) {
-              damageEnemy(G, e, b.damage);
-              dead = true;
+        if (!hitSomething) {
+          for (const ped of state.peds) {
+            if (Math.hypot(ped.x - b.x, ped.y - b.y) < 14) {
+              ped.state = 'flee';
+              ped.fleeX = p.x;
+              ped.fleeY = p.y;
+              ped.fleeT = 5;
+              addHeat(state, 10);
+              state.stats.pedsHit += 1;
+              hitSomething = true;
               break;
             }
           }
         }
-        if (!dead) {
-          for (const car of G.cars) {
-            if ((car.driver === 'traffic' || car.driver === 'convoy' || car.driver === 'target') && dist(car.x, car.y, b.x, b.y) < 22) {
-              car.hp -= b.damage;
-              burst(G, b.x, b.y, 4, '#888888', 70, 0.3);
-              if (car.hp <= 0) explodeCar(G, car);
-              dead = true;
+        if (!hitSomething) {
+          for (const car of state.cars) {
+            if (car.driver === 'player' || car.driver === 'wreck') continue;
+            const dx = car.x - b.x;
+            const dy = car.y - b.y;
+            const along = Math.abs(dx * Math.cos(car.angle) + dy * Math.sin(car.angle));
+            const side = Math.abs(-dx * Math.sin(car.angle) + dy * Math.cos(car.angle));
+            if (along < car.len / 2 + 4 && side < car.wid / 2 + 4) {
+              car.health -= b.damage;
+              state.audio.hit();
+              if (car.health <= 0) explodeCar(state, car);
+              hitSomething = true;
               break;
             }
           }
         }
-      } else {
-        // Enemy bullet: only the player can be hurt.
-        const p = G.player;
-        if (!p.inCar && dist(p.x, p.y, b.x, b.y) < 14) {
-          hurtPlayer(G, b.damage);
-          dead = true;
-        } else if (p.inCar && dist(p.inCar.x, p.inCar.y, b.x, b.y) < 24) {
-          p.inCar.hp -= b.damage;
-          dead = true;
+        if (hitSomething) b.life = 0;
+      } else if (!p.inCar && Math.hypot(p.x - b.x, p.y - b.y) < 16) {
+        damagePlayer(state, b.damage);
+        b.life = 0;
+      } else if (p.inCar && Math.hypot(p.x - b.x, p.y - b.y) < 26) {
+        p.inCar.health -= b.damage * 0.5;
+        if (p.inCar.health <= 0) explodeCar(state, p.inCar);
+        b.life = 0;
+      }
+    }
+    state.bullets = state.bullets.filter((b) => b.life > 0);
+  },
+
+  updateEnemies(state, dt) {
+    const p = state.player;
+    for (const e of state.enemies) {
+      if (e.hp <= 0) continue;
+      const dx = p.x - e.x;
+      const dy = p.y - e.y;
+      const dist = Math.hypot(dx, dy) || 1;
+      e.angle = Math.atan2(dy, dx);
+      e.shootCd -= dt;
+      e.strafeT -= dt;
+      if (e.hp < 16) e.state = 'flee';
+      else if (dist > 300) e.state = 'advance';
+      else if (dist < 130) e.state = 'strafe';
+      else e.state = 'hold';
+      if (e.state === 'flee') {
+        moveCircle(state, e, (-dx / dist) * e.speed * dt, (-dy / dist) * e.speed * dt, 14);
+      } else if (e.state === 'advance') {
+        moveCircle(state, e, (dx / dist) * e.speed * dt, (dy / dist) * e.speed * dt, 14);
+      } else if (e.state === 'strafe') {
+        if (e.strafeT <= 0) {
+          e.strafeDir *= -1;
+          e.strafeT = 0.9 + Math.random() * 0.8;
         }
+        const sx = -dy / dist * e.strafeDir;
+        const sy = dx / dist * e.strafeDir;
+        moveCircle(state, e, sx * e.speed * 0.7 * dt, sy * e.speed * 0.7 * dt, 14);
+      }
+      if (dist < 400 && e.shootCd <= 0 && e.state !== 'flee') {
+        e.shootCd = e.weapon === 'smg' ? 0.9 : 1.5;
+        this.enemyShoot(state, e);
       }
     }
-    if (dead) G.bullets.splice(i, 1);
-  }
-}
+    state.enemies = state.enemies.filter((e) => e.hp > 0 || e.deathT === undefined);
+    // Keep corpses out of the list entirely; kills are counted at damage time.
+    state.enemies = state.enemies.filter((e) => e.hp > 0);
+  },
 
-// Line of sight: sample the segment every 30px; a building in the way
-// blocks the shot. Enemies reposition until they can see the player,
-// so a fight never stalls with both sides shooting at a wall.
-function hasLineOfSight(G, x0, y0, x1, y1) {
-  const d = dist(x0, y0, x1, y1);
-  const steps = Math.max(1, Math.ceil(d / 30));
-  for (let i = 1; i < steps; i++) {
-    const t = i / steps;
-    if (collidesBuilding(G.city.buildings, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, 2)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-export function updateEnemies(G, dt) {
-  const p = G.player;
-  for (const e of G.enemies) {
-    if (e.dead) continue;
-    e.fireTimer -= dt;
-    e.moveTimer -= dt;
-    const d = dist(e.x, e.y, p.x, p.y);
-    const a = angleTo(e.x, e.y, p.x, p.y);
-    e.angle = a;
-    if (d < 520) {
-      e.state = 'fight';
-      const los = hasLineOfSight(G, e.x, e.y, p.x, p.y);
-      if (!los) {
-        e.noLosTime = (e.noLosTime || 0) + dt;
-        if (e.noLosTime > 8 && d < 600) {
-          // Stuck behind a wall with no shot for 8s: flank around to open
-          // ground near the player instead of grinding against the wall.
-          // (The enemy is off-screen behind a building, so the player
-          // just sees it come around the corner.)
-          for (let k = 0; k < 6; k++) {
-            const a2 = G.rng() * Math.PI * 2;
-            const pos = resolveCircle(G.city.buildings, p.x + Math.cos(a2) * 300, p.y + Math.sin(a2) * 300, 13);
-            if (!isWater(pos.x, pos.y)) { e.x = pos.x; e.y = pos.y; break; }
-          }
-          e.noLosTime = 0;
-        }
-      } else {
-        e.noLosTime = 0;
-      }
-      if (!los || d > 260) {
-        // Advance (and slide around the building) until there is a shot.
-        const strafe = (e.strafeDir || 1) * 0.5;
-        const mx = Math.cos(a) * 0.9 + Math.cos(a + Math.PI / 2) * strafe * 0.4;
-        const my = Math.sin(a) * 0.9 + Math.sin(a + Math.PI / 2) * strafe * 0.4;
-        const pos = resolveCircle(G.city.buildings, e.x + mx * e.speed * dt, e.y + my * e.speed * dt, 13);
-        e.x = pos.x;
-        e.y = pos.y;
-      } else if (e.hp < 25 && e.moveTimer <= 0) {
-        // Low health: fall back.
-        e.moveTimer = 1.2;
-        const pos = resolveCircle(G.city.buildings, e.x - Math.cos(a) * e.speed * dt * 1.4, e.y - Math.sin(a) * e.speed * dt * 1.4, 13);
-        e.x = pos.x;
-        e.y = pos.y;
-      }
-      if (los && d < 460 && e.fireTimer <= 0) {
-        e.fireTimer = e.kind === 'boss' ? 1.1 : 1.7;
-        const spread = range(G.rng, -0.16, 0.16);
-        G.bullets.push({
-          x: e.x + Math.cos(a) * 24, y: e.y + Math.sin(a) * 24,
-          vx: Math.cos(a + spread) * 760, vy: Math.sin(a + spread) * 760,
-          life: 0.6, damage: e.kind === 'boss' ? 9 : 6, from: 'enemy',
-        });
-        burst(G, e.x + Math.cos(a) * 28, e.y + Math.sin(a) * 28, 2, '#ffd24d', 100, 0.1);
-        G.audio.sfx('shotEnemy');
-      }
-    } else {
-      e.state = 'guard';
-    }
-  }
-  G.enemies = G.enemies.filter((e) => !e.dead || G.time - (e.deadAt || 0) < 0.2);
-  for (const e of G.enemies) if (e.dead && !e.deadAt) e.deadAt = G.time;
-}
-
-export function updatePickups(G, dt) {
-  const p = G.player;
-  for (let i = G.pickups.length - 1; i >= 0; i--) {
-    const pk = G.pickups[i];
-    if (pk.story) continue; // story package: the mission script collects it
-    pk.bob += dt;
-    const d = dist(pk.x, pk.y, p.x, p.y);
-    const reach = p.inCar ? 44 : 30;
-    if (d < reach) {
-      switch (pk.kind) {
-        case 'health':
-          p.hp = clamp(p.hp + pk.amount, 0, p.maxHp);
-          G.message = 'Health +' + pk.amount;
-          break;
-        case 'ammo-pistol':
-          p.ammo.pistol += pk.amount;
-          G.message = 'Pistol ammo +' + pk.amount;
-          break;
-        case 'ammo-smg':
-          p.ammo.smg += pk.amount;
-          if (p.weapon === 'fists') p.weapon = 'smg';
-          G.message = 'SMG ammo +' + pk.amount;
-          break;
-        case 'weapon-smg':
-          p.weapon = 'smg';
-          p.ammo.smg += 60;
-          G.message = 'Picked up the SMG!';
-          break;
-        case 'weapon-pistol':
-          p.weapon = 'pistol';
+  updatePickups(state, dt) {
+    const p = state.player;
+    for (const pk of state.pickups) {
+      pk.t += dt;
+      if (Math.hypot(pk.x - p.x, pk.y - p.y) < 34) {
+        pk.taken = true;
+        if (pk.kind === 'health') {
+          p.hp = Math.min(100, p.hp + 40);
+          state.audio.pickup();
+        } else if (pk.kind === 'ammo') {
           p.ammo.pistol += 24;
-          G.message = 'Picked up a pistol!';
-          break;
-        case 'cash':
+          p.ammo.smg += 60;
+          if (p.weapon === 'fists') p.weapon = 'pistol';
+          state.audio.pickup();
+        } else if (pk.kind === 'smg') {
+          p.weapon = 'smg';
+          p.ammo.smg += 90;
+          p.mag.smg = 32;
+          state.audio.cash();
+        } else if (pk.kind === 'cash') {
           p.cash += pk.amount;
-          G.message = '+' + '$' + pk.amount;
-          G.audio.sfx('cash');
-          break;
-        case 'package': {
-          G.packagesCollected++;
-          G.message = 'Hidden package ' + G.packagesCollected + '/10';
-          p.cash += 150;
-          if (G.packagesCollected >= 10) {
-            p.cash += 2000;
-            G.message = 'All 10 packages! Bonus $2,000';
-          }
-          G.audio.sfx('pickup');
-          break;
+          state.audio.cash();
         }
-        default:
-          break;
       }
-      if (pk.kind !== 'cash' && pk.kind !== 'package') G.audio.sfx('pickup');
-      G.messageTimer = 2;
-      G.pickups.splice(i, 1);
     }
-  }
-}
+    state.pickups = state.pickups.filter((pk) => !pk.taken && pk.t < 60);
+  },
 
-export function updateCombat(G, dt, input) {
-  const p = G.player;
-  const w = WEAPONS[p.weapon];
-  if (input.wasPressed('KeyR')) reloadWeapon(G);
-  if (w.melee) {
-    if (input.anyPressed(['Space'])) fireWeapon(G);
-  } else if (w.auto) {
-    if (input.mouse.down) fireWeapon(G);
-  } else if (input.mouse.clicked) {
-    fireWeapon(G);
-  }
-  updateBullets(G, dt);
-  updateEnemies(G, dt);
-  updatePickups(G, dt);
-}
+  checkPackages(state) {
+    const p = state.player;
+    for (const pkg of state.city.packages) {
+      if (!pkg.taken && Math.hypot(pkg.x - p.x, pkg.y - p.y) < 36) {
+        pkg.taken = true;
+        p.cash += 250;
+        state.stats.packages += 1;
+        state.audio.cash();
+        state.hudFlash = { text: 'Hidden package +$250', t: 2 };
+      }
+    }
+  },
+};

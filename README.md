@@ -1,38 +1,63 @@
 # Solmar Heat
 
-An original open-world crime game for the make.fun gta6-01 competition.
-Top-down 2D on Canvas, vanilla JS, no libraries, no network — everything
-is drawn and synthesised in the browser.
+An original open-world crime game for the make.fun "Make GTA 6" competition.
+Top-down 2D on canvas, vanilla JavaScript, no libraries, no network — the whole
+game is static files under `game/`.
 
 ## The game
 
-Rae "Rook" Calloway is back in Solmar, a sun-soaked coastal city in the
-fictional state of Alderra, in debt to the fixer Marlowe. Three districts
-(Harbor, Downtown, Palms) on one connected road grid, a beach and a pier,
-day/night cycle, traffic and pedestrians, cars to steal and drive, a
-0–5 star wanted system with police on foot and in cruisers, combat
-(fists, pistol, SMG), 8 story missions in three acts, taxi fares, 10
-hidden packages, and a save system.
+Rae "Rook" Calloway, ex-wheelman, is back in **Solmar** — a sun-soaked coastal
+city in the fictional state of Alderra — and in debt to the fixer Marlowe.
+Three districts on one road grid: the **Harbor** docks, **Downtown** towers and
+the **Palms** beachfront, with water along the south and east edges and a pier
+reaching into it.
 
-## How to play
+- **Explore on foot and by car** — 5 car models (sedan, taxi, coupe, pickup,
+  van), arcade driving with drift and damage, traffic that follows the lanes
+  and pedestrians who walk the sidewalks and flee gunfire.
+- **Steal cars** — walk up, press E; the driver bails and runs, and the heat
+  goes up.
+- **Wanted 0–5 stars** — cops chase on foot and in cruisers, roadblocks of
+  attention at 3 stars; get busted on foot or wasted at 0 health and you wake
+  up at the police station or hospital, lighter in the pocket.
+- **8 story missions in three acts** — car theft tutorial, a downtown pickup,
+  a docks shootout, a timed getaway at 3 stars, tailing an informant,
+  a boardwalk brawl, a bank holdout and a finale chase against the Harbor
+  Kings' boss. Briefing cards, waypoints, fail/retry, cash rewards.
+- **Side work** — taxi fares while driving, 10 hidden packages worth $250 each.
+- **Combat** — fists, pistol, SMG; enemy crew AI that advances, strafes and
+  flees at low health; ammo and health pickups.
+- **HUD + minimap** — health, cash, flashing wanted stars, weapon and ammo,
+  day/night clock, objective banner, speedometer, minimap with mission, cop,
+  car and ped blips.
+- **Day/night cycle** — dusk tints, lit windows, headlights and a WebAudio
+  synth soundtrack (bassline + hats) with gunshots, sirens and engine hum.
+- **Start + save** — title screen (New Game / Continue / How to Play), pause
+  menu, progress saved to localStorage, M mutes.
 
-Serve `game/` with any static server (`node serve.ts`, then
-http://localhost:8080) and open `game/index.html`.
+## Controls
 
-- **WASD / arrows** move, **Shift** sprint, **Space** punch
-- **Mouse** aim, **click** shoot (hold for SMG)
-- **E** enter / steal a car, **E** again to get out
-- **1 / 2 / 3** switch weapon, **R** reload
-- **Enter** start the next mission, **P / Esc** pause, **M** mute
+WASD / arrows move · Shift sprint · mouse aim · click shoot · Space punch ·
+E enter / steal / exit car · R reload · 1/2/3 weapons · P pause · M mute.
 
-## Files
+## Run it
 
-- `main.ts` — entrypoint: copies `game/` + `screenshots/` to `/output`
-  and writes `dossier.json` via `vendor/makefun-game.ts`
-- `game/src/` — one module per system: `config`, `random`, `input`,
-  `audio`, `city`, `entities`, `combat`, `missions`, `hud`, `render`,
-  `shots`, `main`
-- `screenshots/` — 4 real renders of the game's own code
+```
+node serve.ts        # then open http://localhost:8080
+```
 
-Everything is original: the city, characters, story, art and music were
-made for this game. Nothing is copied from any commercial title.
+Or serve `game/` with any static file server and open `index.html`.
+
+## Build the entry
+
+```
+mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
+```
+
+`main.ts` copies `game/` and `screenshots/` to the output directory and
+writes `dossier.json` with the vendored make.fun library.
+
+## License
+
+MIT — see `LICENSE`. An original game, not affiliated with any commercial
+game series.
