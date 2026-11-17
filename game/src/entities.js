@@ -539,8 +539,10 @@ export function updateCops(G, dt) {
       }
       cop.x = clamp(cop.x, 40, WORLD.W - 40);
       cop.y = clamp(cop.y, 40, WORLD.H - 40);
-      // Grab the player on foot.
-      if (!p.inCar && d < 30) {
+      // Grab the player on foot — but never mid-mission: on a job the
+      // cops want Rook dead, not arrested, and a grab would end the
+      // mission by ambush while the player is fighting someone else.
+      if (!p.inCar && d < 30 && !G.mission) {
         p.bustedTimer += dt;
         if (p.bustedTimer > TUNING.bustedTime) {
           G.screen = 'busted';
