@@ -60,7 +60,7 @@ export function stageShot(G, name) {
     G.mission.stage = 1;
     G.mission.state.total = 5;
     G.mission.state.kills = 0;
-    const spots = [[760, 2040], [920, 2040], [760, 2180], [920, 2180], [840, 2100]];
+    const spots = [[720, 2260], [960, 2260], [700, 2040], [980, 2040], [840, 2320]];
     for (const [x, y] of spots) spawnEnemy(G, x, y, 'goon');
     spawnPickup(G, 900, 2200, 'health', 25);
     // A burst of live fire for the frame.

@@ -105,8 +105,10 @@ export function damageEnemy(G, e, dmg) {
 }
 
 export function spawnEnemy(G, x, y, kind) {
+  // Never spawn inside a building — resolve out to open ground first.
+  const pos = resolveCircle(G.city.buildings, x, y, 13);
   const e = {
-    x, y, angle: 0, hp: kind === 'boss' ? 220 : kind === 'heavy' ? 90 : 50,
+    x: pos.x, y: pos.y, angle: 0, hp: kind === 'boss' ? 220 : kind === 'heavy' ? 90 : 50,
     kind: kind || 'goon', state: 'guard',
     fireTimer: range(G.rng, 0.5, 1.5), moveTimer: 0,
     speed: 120, dead: false, target: null,

@@ -17,8 +17,8 @@ export const MISSIONS = [
 ];
 
 const PACKAGE_SPOTS = [
-  [300, 300], [700, 1500], [1100, 600], [1500, 2250], [1800, 300],
-  [2100, 2250], [2500, 600], [2900, 1500], [3300, 300], [3300, 2250],
+  [480, 300], [1200, 1500], [1920, 600], [2640, 2250], [3360, 900],
+  [480, 2100], [1200, 300], [1920, 2100], [2640, 1500], [3360, 2100],
 ];
 
 export function placePackages(G) {
@@ -38,7 +38,7 @@ export function startMission(G, index) {
     spawnPickup(G, 860, 2260, 'weapon-smg', 0);
     spawnPickup(G, 820, 2280, 'health', 25);
   }
-  if (index === 1) spawnPickup(G, 2100, 1350, 'weapon-pistol', 0);
+  if (index === 1) spawnPickup(G, 2040, 1200, 'weapon-pistol', 0);
   if (index === 6) spawnPickup(G, 2280, 1380, 'health', 50);
 }
 
@@ -130,17 +130,17 @@ export function updateMission(G, dt) {
     }
     case 1: {
       if (m.stage === 0) {
-        setWaypoint(G, 2100, 1350, 'Package');
-        if (dist(p.x, p.y, 2100, 1350) < 90) {
+        setWaypoint(G, 2100, 1200, 'Package');
+        if (dist(p.x, p.y, 2100, 1200) < 90) {
           m.stage = 1;
-          s.pkg = { x: 2100, y: 1350 };
-          spawnPickup(G, 2100, 1350, 'package', 0);
+          s.pkg = { x: 2100, y: 1200 };
+          spawnPickup(G, 2100, 1200, 'package', 0);
           // The package pickup is the story one, not a hidden one.
           const pk = G.pickups[G.pickups.length - 1];
           pk.story = true;
         }
       } else if (m.stage === 1) {
-        setWaypoint(G, 2100, 1350, 'Package');
+        setWaypoint(G, 2100, 1200, 'Package');
         if (s.pkg && dist(p.x, p.y, s.pkg.x, s.pkg.y) < 40) {
           // Collect the story package directly.
           m.stage = 2;
@@ -161,7 +161,8 @@ export function updateMission(G, dt) {
           m.stage = 1;
           s.total = 5;
           s.kills = 0;
-          const spots = [[760, 2040], [920, 2040], [760, 2180], [920, 2180], [840, 2100]];
+          // Yard around the warehouse, never inside the building itself.
+          const spots = [[720, 2260], [960, 2260], [700, 2040], [980, 2040], [840, 2320]];
           for (const [x, y] of spots) spawnEnemy(G, x, y, 'goon');
         }
       } else {
@@ -240,7 +241,8 @@ export function updateMission(G, dt) {
         }
         if (s.tail >= 20) {
           m.stage = 1;
-          t.ai.loop = [[3000, 2100]];
+          // Stop south of the motel, on open ground — never inside it.
+          t.ai.loop = [[3000, 2280]];
           t.speed = 150;
           G.message = 'He stopped at the Motel. Confront him.';
           G.messageTimer = 3;
@@ -282,7 +284,8 @@ export function updateMission(G, dt) {
           m.stage = 1;
           s.total = 6;
           s.kills = 0;
-          const spots = [[2980, 2540], [3120, 2540], [3000, 2620], [3140, 2620], [3060, 2500], [2900, 2580]];
+          // Boardwalk yard north of the pier, never inside the pier itself.
+          const spots = [[2920, 2480], [3200, 2480], [2900, 2420], [3220, 2420], [3060, 2460], [2840, 2460]];
           for (const [x, y] of spots) spawnEnemy(G, x, y, 'goon');
         }
       } else if (m.stage === 1) {
@@ -290,7 +293,8 @@ export function updateMission(G, dt) {
         s.kills = s.total - G.enemies.filter((e) => e.hp > 0).length;
         if (G.enemies.filter((e) => e.hp > 0).length === 0) {
           m.stage = 2;
-          const leader = spawnPed(G, 3100, 2620);
+          // The leader runs along the boardwalk's north side, on open ground.
+          const leader = spawnPed(G, 3100, 2470);
           leader.state = 'flee';
           leader.panic = 60;
           leader.speed = 210;
@@ -302,10 +306,10 @@ export function updateMission(G, dt) {
         const l = s.leader;
         if (l) {
           setWaypoint(G, l.x, l.y, 'Leader');
-          // The leader runs along the beach away from the player.
+          // The leader runs along the boardwalk, away from the player.
           const a = angleTo(p.x, p.y, l.x, l.y);
           l.x += Math.cos(a) * 210 * dt;
-          l.y = clamp(l.y, WORLD.BEACH_Y + 20, WORLD.BEACH_Y + 90);
+          l.y = clamp(l.y, 2440, 2500);
           l.x = clamp(l.x, 200, WORLD.WATER_X - 100);
           if (dist(p.x, p.y, l.x, l.y) < 34) completeMission(G);
           if (dist(p.x, p.y, l.x, l.y) > 1000) failMission(G, 'The leader escaped down the beach.');
@@ -352,12 +356,13 @@ export function updateMission(G, dt) {
         if (!s.convoy) {
           s.convoy = [];
           s.kills = 0;
-          const starts = [[700, 1200], [780, 1200], [860, 1200]];
+          // Convoy runs a loop on the roads, never through buildings.
+          const starts = [[480, 1200], [560, 1200], [640, 1200]];
           for (const [x, y] of starts) {
             const car = makeCar('pickup', x, y, 0, 'convoy');
             car.color = '#3a2a4a';
             car.speed = 150;
-            car.ai = { loop: [[700, 1200], [700, 1920], [1100, 1920], [1100, 1200]], wp: 0 };
+            car.ai = { loop: [[480, 1200], [480, 1920], [1200, 1920], [1200, 1200]], wp: 0 };
             G.cars.push(car);
             s.convoy.push(car);
           }
@@ -379,7 +384,8 @@ export function updateMission(G, dt) {
           m.stage = 1;
           s.total = 9;
           s.kills = 0;
-          const spots = [[760, 2040], [920, 2040], [760, 2180], [920, 2180], [840, 1960], [700, 2100], [980, 2100], [840, 2240], [840, 2100]];
+          // Yard around the warehouse, never inside the building itself.
+          const spots = [[720, 2260], [960, 2260], [700, 2040], [980, 2040], [840, 1960], [680, 2200], [1000, 2200], [760, 2320], [840, 2320]];
           for (let i = 0; i < spots.length; i++) {
             spawnEnemy(G, spots[i][0], spots[i][1], i === 8 ? 'boss' : 'goon');
           }
