@@ -453,8 +453,15 @@ export function updateTaxi(G, dt) {
       t.wait += dt;
       if (t.wait > 6) {
         t.wait = 0;
-        const spot = randomSidewalkPoint(G.rng);
-        if (dist(spot.x, spot.y, p.x, p.y) < 600) {
+        // A random city-wide point rarely lands near the cab: try several
+        // and take the first one within a short drive, so a fare shows
+        // up within seconds of driving a taxi instead of minutes.
+        let spot = null;
+        for (let k = 0; k < 8; k++) {
+          const c = randomSidewalkPoint(G.rng);
+          if (dist(c.x, c.y, p.x, p.y) < 900) { spot = c; break; }
+        }
+        if (spot) {
           t.active = true;
           t.stage = 'pickup';
           t.ped = spawnPed(G, spot.x, spot.y);
