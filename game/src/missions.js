@@ -39,7 +39,20 @@ export function startMission(G, index) {
     spawnPickup(G, 820, 2280, 'health', 25);
   }
   if (index === 1) spawnPickup(G, 2040, 1200, 'weapon-pistol', 0);
-  if (index === 6) spawnPickup(G, 2280, 1380, 'health', 50);
+  if (index === 2) {
+    // Arm the player on the approach to the warehouse, not inside it.
+    spawnPickup(G, 860, 2260, 'weapon-smg', 0);
+    spawnPickup(G, 820, 2280, 'health', 25);
+  }
+  if (index === 5) {
+    // SMG on the boardwalk road, on the approach to the crew.
+    spawnPickup(G, 3060, 2400, 'weapon-smg', 0);
+    spawnPickup(G, 3120, 2400, 'health', 25);
+  }
+  if (index === 6) {
+    spawnPickup(G, 2280, 1380, 'health', 50);
+    spawnPickup(G, 2280, 1440, 'weapon-smg', 0);
+  }
 }
 
 export function completeMission(G) {
@@ -281,13 +294,16 @@ export function updateMission(G, dt) {
     }
     case 5: {
       if (m.stage === 0) {
-        setWaypoint(G, 3060, 2580, 'Boardwalk');
-        if (dist(p.x, p.y, 3060, 2580) < 180) {
+        // Boardwalk fight happens on the open sand north of the pier —
+        // the pier itself (3060,2580) blocks fire, so the trigger and
+        // the crew stay north of it.
+        setWaypoint(G, 3060, 2460, 'Boardwalk');
+        if (dist(p.x, p.y, 3060, 2460) < 180) {
           m.stage = 1;
           s.total = 6;
           s.kills = 0;
           // Boardwalk yard north of the pier, never inside the pier itself.
-          const spots = [[2920, 2480], [3200, 2480], [2900, 2420], [3220, 2420], [3060, 2460], [2840, 2460]];
+          const spots = [[2920, 2480], [3200, 2480], [2900, 2420], [3220, 2420], [2960, 2400], [2840, 2460]];
           for (const [x, y] of spots) spawnEnemy(G, x, y, 'goon');
         }
       } else if (m.stage === 1) {
@@ -386,6 +402,9 @@ export function updateMission(G, dt) {
           m.stage = 1;
           s.total = 9;
           s.kills = 0;
+          // Arm the player on the warehouse approach before the last fight.
+          spawnPickup(G, 860, 2260, 'weapon-smg', 0);
+          spawnPickup(G, 820, 2280, 'health', 25);
           // Yard around the warehouse, never inside the building itself.
           const spots = [[720, 2260], [960, 2260], [700, 2040], [980, 2040], [840, 1960], [680, 2200], [1000, 2200], [760, 2320], [840, 2320]];
           for (let i = 0; i < spots.length; i++) {
