@@ -2,8 +2,8 @@
 import { MISSION_REWARDS, WORLD } from './config.js';
 import { range, dist, angleTo, clamp } from './random.js';
 import { landmarkById, randomStreetPoint, randomSidewalkPoint } from './city.js';
-import { spawnEnemy, spawnPickup, explodeCar } from './combat.js';
-import { spawnPed, spawnCop, addHeat, nearestCar, makeCar } from './entities.js';
+import { spawnEnemy, spawnPickup } from './combat.js';
+import { spawnPed, spawnCop, addHeat, nearestCar, makeCar, explodeCar } from './entities.js';
 
 export const MISSIONS = [
   { title: 'First Wheels', act: 'Act I — Coming Home', briefing: 'Rae "Rook" Calloway is back in Solmar, in debt to the fixer Marlowe. First job: steal a car and bring it to Kiki\'s garage.' },

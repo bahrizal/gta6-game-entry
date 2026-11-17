@@ -533,7 +533,10 @@ export function updateCops(G, dt) {
       const a = angleTo(cop.x, cop.y, p.x, p.y);
       cop.angle = a;
       cop.speed = TUNING.copFootSpeed;
-      moveOnFoot(G, cop, Math.cos(a), Math.sin(a), dt, 13);
+      if (d > 26) {
+        // Close in, but stop at arm's length so the grab can finish.
+        moveOnFoot(G, cop, Math.cos(a), Math.sin(a), dt, 13);
+      }
       cop.x = clamp(cop.x, 40, WORLD.W - 40);
       cop.y = clamp(cop.y, 40, WORLD.H - 40);
       // Grab the player on foot.
@@ -546,9 +549,9 @@ export function updateCops(G, dt) {
       } else {
         p.bustedTimer = Math.max(0, p.bustedTimer - dt * 2);
       }
-      // Punch the player.
+      // Punch the player — only when they are on foot and in reach.
       cop.punchTimer -= dt;
-      if (d < 40 && cop.punchTimer <= 0) {
+      if (!p.inCar && d < 40 && cop.punchTimer <= 0) {
         cop.punchTimer = 0.9;
         hurtPlayer(G, 8);
         G.audio.sfx('punch');
