@@ -64,6 +64,12 @@ export function completeMission(G) {
   G.messageTimer = 4;
   G.audio.sfx('cash');
   G.waypoint = null;
+  // A finished job shakes the heat: the next job starts clean, so a
+  // getaway's 3 stars never ambush the tail that follows it.
+  G.heat = 0;
+  G.heatLock = 0;
+  G.wanted = 0;
+  G.cops.length = 0;
   if (m.index === 7) {
     G.storyComplete = true;
     G.screen = 'win';
