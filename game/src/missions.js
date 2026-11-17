@@ -50,8 +50,9 @@ export function startMission(G, index) {
     spawnPickup(G, 3120, 2400, 'health', 25);
   }
   if (index === 6) {
+    // North of the bank, on open ground — never inside the bank itself.
     spawnPickup(G, 2280, 1380, 'health', 50);
-    spawnPickup(G, 2280, 1440, 'weapon-smg', 0);
+    spawnPickup(G, 2220, 1380, 'weapon-smg', 0);
   }
 }
 
