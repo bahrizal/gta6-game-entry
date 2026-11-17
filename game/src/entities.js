@@ -583,12 +583,18 @@ export function updateCops(G, dt) {
       }
       const d = dist(car.x, car.y, p.x, p.y);
       if (d < 46) {
-        if (p.inCar) {
-          p.inCar.hp -= 2;
-          car.hp -= 1;
-          if (p.inCar.hp <= 0) explodeCar(G, p.inCar);
-        } else {
-          hurtPlayer(G, 14 * dt * 4);
+        // A ram is one hit with a cooldown, not damage every frame:
+        // a cruiser leaning on the player must not melt them in a second.
+        car.ramTimer = (car.ramTimer || 0) - dt;
+        if (car.ramTimer <= 0) {
+          car.ramTimer = 1.0;
+          if (p.inCar) {
+            p.inCar.hp -= 8;
+            car.hp -= 2;
+            if (p.inCar.hp <= 0) explodeCar(G, p.inCar);
+          } else {
+            hurtPlayer(G, 12);
+          }
         }
         G.camera.shake = Math.min(G.camera.shake + 3, 10);
         if (G.rng() < 0.1) G.audio.sfx('crash');
