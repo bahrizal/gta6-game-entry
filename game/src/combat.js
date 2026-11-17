@@ -1,7 +1,7 @@
 // Combat: weapons, bullets, damage, enemy AI and pickups.
 import { WEAPONS, TUNING } from './config.js';
 import { range, dist, angleTo, clamp } from './random.js';
-import { collidesBuilding, resolveCircle } from './city.js';
+import { collidesBuilding, resolveCircle, isWater } from './city.js';
 import { burst, addHeat, hurtPlayer, killPed, explodeCar } from './entities.js';
 
 export function fireWeapon(G) {
@@ -224,6 +224,23 @@ export function updateEnemies(G, dt) {
     if (d < 520) {
       e.state = 'fight';
       const los = hasLineOfSight(G, e.x, e.y, p.x, p.y);
+      if (!los) {
+        e.noLosTime = (e.noLosTime || 0) + dt;
+        if (e.noLosTime > 8 && d < 600) {
+          // Stuck behind a wall with no shot for 8s: flank around to open
+          // ground near the player instead of grinding against the wall.
+          // (The enemy is off-screen behind a building, so the player
+          // just sees it come around the corner.)
+          for (let k = 0; k < 6; k++) {
+            const a2 = G.rng() * Math.PI * 2;
+            const pos = resolveCircle(G.city.buildings, p.x + Math.cos(a2) * 300, p.y + Math.sin(a2) * 300, 13);
+            if (!isWater(pos.x, pos.y)) { e.x = pos.x; e.y = pos.y; break; }
+          }
+          e.noLosTime = 0;
+        }
+      } else {
+        e.noLosTime = 0;
+      }
       if (!los || d > 260) {
         // Advance (and slide around the building) until there is a shot.
         const strafe = (e.strafeDir || 1) * 0.5;
