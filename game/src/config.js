@@ -55,7 +55,7 @@ export const TUNING = {
   pedSpeed: 55,
   pedFleeSpeed: 190,
   trafficSpeed: 150,
-  copFootSpeed: 235,
+  copFootSpeed: 215,
   copCruiserSpeed: 360,
   wantedDecay: 1.6,
   heatPerCarTheft: 14,
@@ -63,7 +63,7 @@ export const TUNING = {
   heatPerShot: 0.8,
   heatPerCopKill: 30,
   heatPerKill: 12,
-  bustedTime: 1.6,
+  bustedTime: 2.5,
   dayLength: 480, // seconds of play per full day/night cycle
   startClock: 8 * 3600 + 20 * 60, // 08:20 in the morning
   duskClock: 18 * 3600 + 30 * 60,
