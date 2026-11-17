@@ -127,10 +127,14 @@ function completeMission(state) {
   state.mission.active = false;
   state.mission.idx += 1;
   state.mission.data = {};
+  // Mission crews do not linger: leftover goons from a finished job would
+  // otherwise haunt the next mission (the bank holdout leaves a small army).
+  state.enemies = [];
   state.hudFlash = { text: `Mission complete: ${m.title}  +$${m.reward}`, t: 3.5 };
   state.audio.cash();
   state.audio.sting();
   state.stats.missionsDone += 1;
+  if (state.onSave) state.onSave();
 }
 
 export function failMission(state, reason) {
@@ -138,6 +142,7 @@ export function failMission(state, reason) {
   state.mission.failed = true;
   state.mission.failReason = reason;
   state.mission.data = {};
+  state.enemies = [];
   state.hudFlash = { text: `Mission failed: ${reason}`, t: 3.5 };
   state.audio.fail();
 }
@@ -249,7 +254,10 @@ export function updateMissions(state, dt) {
       if (!d.spawned) {
         d.spawned = true;
         state.stats.missionKills = 0;
-        combat.spawnGoons(state, step.spawnAt[0], step.spawnAt[1], step.count, { weapon: step.count > 6 ? 'smg' : 'pistol' });
+        // Kill-step crews carry pistols: eight SMGs focus-firing would melt
+        // 100 HP in about two seconds, which no player could survive on foot.
+        // The bank holdout waves keep SMGs; that step is meant to be brutal.
+        combat.spawnGoons(state, step.spawnAt[0], step.spawnAt[1], step.count, { weapon: 'pistol' });
         if (step.count > 6) state.pickups.push({ x: step.spawnAt[0] + 60, y: step.spawnAt[1], kind: 'smg', amount: 0, t: 0 });
       }
       if (state.stats.missionKills >= step.count) completeStep(state);
@@ -282,7 +290,8 @@ export function updateMissions(state, dt) {
       if (d.tailT >= step.seconds) {
         car.driver = 'parked';
         car.speed = 0;
-        combat.spawnGoons(state, car.x, car.y, 2, {});
+        // The confrontation itself is the next step (its own spawn at the
+        // waypoint, counted cleanly); no extra crew spawns here.
         completeStep(state);
       }
       break;
@@ -316,10 +325,18 @@ export function updateMissions(state, dt) {
     case 'holdout': {
       d.waveT = (d.waveT || 0) - dt;
       const wave = Math.floor(d.stepT / 15) + 1;
+      if (!d.spawned) {
+        d.spawned = true;
+        // A health pickup at the bank door: the holdout is a siege, and
+        // Rook needs something to fall back on.
+        state.pickups.push({ x: p.x + 80, y: p.y, kind: 'health', amount: 0, t: 0 });
+      }
       if (d.waveT <= 0) {
-        d.waveT = 6;
-        const n = Math.min(2 + wave, 5);
-        combat.spawnGoons(state, p.x + (Math.random() < 0.5 ? -320 : 320), p.y + (Math.random() < 0.5 ? -260 : 260), n, { weapon: 'smg' });
+        // Waves arrive from farther out and a little slower, so the player
+        // has time to react instead of being focus-fired at point blank.
+        d.waveT = 8;
+        const n = Math.min(2 + wave, 4);
+        combat.spawnGoons(state, p.x + (Math.random() < 0.5 ? -520 : 520), p.y + (Math.random() < 0.5 ? -420 : 420), n, { weapon: 'smg' });
         addHeat(state, 20);
         spawnSmoke(state, p.x, p.y, 4);
       }

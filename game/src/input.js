@@ -5,6 +5,8 @@ export const ACTION_INTERACT = 4;
 export const ACTION_RELOAD = 8;
 export const ACTION_MUTE = 16;
 export const ACTION_PUNCH = 32;
+export const ACTION_UP = 64;
+export const ACTION_DOWN = 128;
 
 export function createInput(canvas) {
   const held = new Set();
@@ -18,6 +20,9 @@ export function createInput(canvas) {
     if (e.repeat) return;
     held.add(e.code);
     if (e.code === 'Enter' || e.code === 'Space') actions |= ACTION_CONFIRM;
+    if (e.code === 'Space') actions |= ACTION_PUNCH;
+    if (e.code === 'ArrowUp') actions |= ACTION_UP;
+    if (e.code === 'ArrowDown') actions |= ACTION_DOWN;
     if (e.code === 'KeyP' || e.code === 'Escape') actions |= ACTION_PAUSE;
     if (e.code === 'KeyE') actions |= ACTION_INTERACT;
     if (e.code === 'KeyR') actions |= ACTION_RELOAD;

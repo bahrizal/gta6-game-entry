@@ -484,6 +484,11 @@ export function updatePeds(state, dt) {
   if (state.peds.filter((q) => Math.hypot(q.x - p.x, q.y - p.y) < 900).length < 12) {
     spawnPeds(state, state.rng, 3);
   }
+  // Cap the crowd: drop the peds farthest from the player.
+  if (state.peds.length > 36) {
+    state.peds.sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y));
+    state.peds.length = 36;
+  }
 }
 
 export function spawnCop(state, onFoot) {
@@ -534,8 +539,18 @@ export function updatePolice(state, dt) {
       continue;
     }
     cop.state = 'chase';
-    moveCircle(state, cop, (dx / dist) * cop.speed * dt, (dy / dist) * cop.speed * dt, 12);
-    if (dist < 48) {
+    // During a story mission cops close in and shoot, but they never bust
+    // Rook mid-mission: a scripted shootout must not end on a touch.
+    if (state.mission.active && dist < 150) {
+      cop.shootCd -= dt;
+      if (cop.shootCd <= 0) {
+        cop.shootCd = 1.6;
+        state.combat.enemyShoot(state, cop);
+      }
+    } else {
+      moveCircle(state, cop, (dx / dist) * cop.speed * dt, (dy / dist) * cop.speed * dt, 12);
+    }
+    if (dist < 48 && !state.mission.active) {
       cop.bustT += dt;
       if (cop.bustT > 1.2) {
         state.screen = 'busted';

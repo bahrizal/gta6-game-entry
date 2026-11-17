@@ -41,6 +41,9 @@ export function stageShot(name, state) {
     coupe.speed = 260;
     state.cars.push(coupe);
     enterCar(state, coupe);
+    p.weapon = 'pistol';
+    p.mag.pistol = 12;
+    p.ammo.pistol = 48;
     p.cash = 2450;
     state.wanted.heat = 40;
     state.wanted.stars = 2;
@@ -84,16 +87,20 @@ export function stageShot(name, state) {
     return { screen: 'play' };
   }
   if (name === 'night') {
-    // Night cruise on the beach road: headlights, palms, 1 star.
-    baseScene(state, 23.4, 2000, 2400);
-    const sedan = makeCar('sedan', 2000, 2400, 0, 'parked');
+    // Night cruise on the beach road by the pier: headlights, palms, beach
+    // motels, 1 star. East end so the pier and motels fill the frame.
+    baseScene(state, 23.4, 3000, 2400);
+    const sedan = makeCar('sedan', 3000, 2400, 0, 'parked');
     sedan.speed = 220;
     state.cars.push(sedan);
     enterCar(state, sedan);
+    p.weapon = 'pistol';
+    p.mag.pistol = 12;
+    p.ammo.pistol = 48;
     p.cash = 5120;
     state.wanted.heat = 20;
     state.wanted.stars = 1;
-    const cruiser = makeCar('cruiser', 2000 - 260, 2400 + 26, 0, 'police');
+    const cruiser = makeCar('cruiser', 3000 - 260, 2400 + 26, 0, 'police');
     cruiser.speed = 220;
     state.cars.push(cruiser);
     state.screen = 'play';

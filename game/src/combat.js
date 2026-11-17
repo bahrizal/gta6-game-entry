@@ -2,7 +2,7 @@
 // Enemies are the Harbor Kings crew and corrupt cops; peds are never targets.
 import { WEAPONS } from './config.js';
 import { addHeat, damagePlayer, explodeCar, moveCircle, spawnSmoke } from './entities.js';
-import { collides } from './city.js';
+import { collides, roadPointNear } from './city.js';
 
 export const combat = {
   fireWeapon(state, shooter, tx, ty) {
@@ -103,7 +103,9 @@ export const combat = {
 
   spawnGoons(state, x, y, count, opts = {}) {
     const made = [];
-    for (let i = 0; i < count; i++) {
+    let attempts = 0;
+    while (made.length < count && attempts < count * 12) {
+      attempts += 1;
       const gx = x + (Math.random() - 0.5) * 260;
       const gy = y + (Math.random() - 0.5) * 260;
       if (collides(state.city, gx, gy, 16)) continue;
@@ -114,6 +116,18 @@ export const combat = {
         boss: !!opts.boss,
       };
       if (e.boss) e.hp = 320;
+      state.enemies.push(e);
+      made.push(e);
+    }
+    // Last resort: place the rest on the nearest road so a kill step can
+    // never soft-lock for want of a target.
+    while (made.length < count) {
+      const rp = roadPointNear(state.rng, x, y, 200);
+      const e = {
+        id: state.nextId++, x: rp.x, y: rp.y, angle: 0, hp: opts.hp || 55,
+        speed: 165 + Math.random() * 30, state: 'advance', shootCd: 0.5 + Math.random(),
+        strafeDir: 1, strafeT: 0, weapon: opts.weapon || 'pistol', boss: false,
+      };
       state.enemies.push(e);
       made.push(e);
     }
@@ -234,14 +248,42 @@ export const combat = {
       e.angle = Math.atan2(dy, dx);
       e.shootCd -= dt;
       e.strafeT -= dt;
-      if (e.hp < 16) e.state = 'flee';
-      else if (dist > 300) e.state = 'advance';
+      // Stuck detection: if an advancing goon barely moves for ~0.8s it is
+      // wedged on a building corner, so it detours sideways for a beat.
+      if (e._sx === undefined) {
+        e._sx = e.x;
+        e._sy = e.y;
+        e._stuck = 0;
+        e.detourT = 0;
+      }
+      const moved = Math.hypot(e.x - e._sx, e.y - e._sy);
+      if (moved > 10) {
+        e._sx = e.x;
+        e._sy = e.y;
+        e._stuck = 0;
+      } else {
+        e._stuck += dt;
+      }
+      if (e.hp < 16 && dist >= 180) e.state = 'flee';
+      else if (e.detourT > 0) {
+        e.state = 'detour';
+        e.detourT -= dt;
+      } else if (e._stuck > 0.8 && dist > 120) {
+        e.state = 'detour';
+        e.detourT = 0.9;
+        e.detourDir = Math.random() < 0.5 ? 1 : -1;
+        e._stuck = 0;
+      } else if (dist > 300) e.state = 'advance';
       else if (dist < 130) e.state = 'strafe';
       else e.state = 'hold';
       if (e.state === 'flee') {
         moveCircle(state, e, (-dx / dist) * e.speed * dt, (-dy / dist) * e.speed * dt, 14);
       } else if (e.state === 'advance') {
         moveCircle(state, e, (dx / dist) * e.speed * dt, (dy / dist) * e.speed * dt, 14);
+      } else if (e.state === 'detour') {
+        const sx = -dy / dist * e.detourDir;
+        const sy = dx / dist * e.detourDir;
+        moveCircle(state, e, sx * e.speed * dt, sy * e.speed * dt, 14);
       } else if (e.state === 'strafe') {
         if (e.strafeT <= 0) {
           e.strafeDir *= -1;

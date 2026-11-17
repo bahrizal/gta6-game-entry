@@ -139,11 +139,30 @@ export function buildCity(rng) {
   }
 
   // Ten hidden packages tucked at sidewalk corners and landmarks.
+  // Each spot is nudged to the nearest open ground so no package ever
+  // spawns inside a building.
   const packageSpots = [
     [560, 560], [1120, 400], [2000, 560], [2720, 400], [3280, 1120],
     [560, 1280], [2000, 2000], [2720, 2000], [3280, 2320], [3030, 2650],
   ];
-  const packages = packageSpots.map(([x, y]) => ({ x, y, taken: false }));
+  const packages = packageSpots.map(([x, y]) => {
+    let px = x;
+    let py = y;
+    if (buildingAt({ buildings }, px, py, 18)) {
+      outer: for (const r of [50, 100, 180, 280]) {
+        for (let a = 0; a < 8; a++) {
+          const qx = x + Math.cos((a / 8) * Math.PI * 2) * r;
+          const qy = y + Math.sin((a / 8) * Math.PI * 2) * r;
+          if (!buildingAt({ buildings }, qx, qy, 18)) {
+            px = qx;
+            py = qy;
+            break outer;
+          }
+        }
+      }
+    }
+    return { x: px, y: py, taken: false };
+  });
 
   return { buildings, palms, props, lights, packages, palette: PALETTE };
 }

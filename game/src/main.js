@@ -2,7 +2,7 @@
 // busted / wasted / how-to), save/load and the ?shot= staging hook.
 import { SAVE_KEY, STEP, VIEW_H, VIEW_W } from './config.js';
 import { createRandom } from './random.js';
-import { ACTION_CONFIRM, ACTION_INTERACT, ACTION_MUTE, ACTION_PAUSE, ACTION_RELOAD, createInput } from './input.js';
+import { ACTION_CONFIRM, ACTION_DOWN, ACTION_INTERACT, ACTION_MUTE, ACTION_PAUSE, ACTION_PUNCH, ACTION_RELOAD, ACTION_UP, createInput } from './input.js';
 import { createAudio } from './audio.js';
 import { buildCity } from './city.js';
 import {
@@ -73,17 +73,20 @@ function createState(seedValue) {
     combat,
     saveExists: false,
     hasSmg: false,
+    onSave: null,
   };
   spawnParkedCars(state, rng, 16);
   spawnTraffic(state, rng, 12);
   spawnPeds(state, rng, 18);
-  // A pistol pickup and an SMG pickup near the start so combat is reachable fast.
-  state.pickups.push({ x: 1920, y: 1980, kind: 'ammo', amount: 0, t: 0 });
-  state.pickups.push({ x: 2100, y: 2080, kind: 'smg', amount: 0, t: 0 });
+  // A pistol-ammo pickup and an SMG pickup on the roads near the start,
+  // so combat is reachable fast. (Road points, never inside a building.)
+  state.pickups.push({ x: 1920, y: 2100, kind: 'ammo', amount: 0, t: 0 });
+  state.pickups.push({ x: 2100, y: 1920, kind: 'smg', amount: 0, t: 0 });
   return state;
 }
 
 const state = createState(seed);
+state.onSave = saveGame;
 window.__solmar = state;
 
 function readSave() {
@@ -215,6 +218,12 @@ function updateWorld(dt, input) {
   state.marker = missionMarker(state);
   computePrompt();
   state.audio.setSiren(state.wanted.stars >= 2, state.time);
+  // Autosave every 20 seconds of play so progress survives a reload.
+  state.saveT = (state.saveT || 0) + dt;
+  if (state.saveT >= 20) {
+    state.saveT = 0;
+    saveGame();
+  }
   if (state.player.dead && state.screen === 'play') {
     state.screen = 'wasted';
     state.audio.fail();
@@ -260,6 +269,7 @@ function startNewGame() {
   });
   state.audio = createAudio();
   state.combat = combat;
+  state.onSave = saveGame;
   state.screen = 'play';
   state.audio.unlock();
   state.audio.startMusic();
@@ -432,7 +442,6 @@ function runGame() {
   const input = createInput(canvas);
   let accumulator = 0;
   let last = performance.now();
-  let prevSpace = false;
 
   announce('Solmar Heat. Press Enter or click to start.');
 
@@ -453,13 +462,11 @@ function runGame() {
         else if (choice === 'How to Play') state.screen = 'howto';
         return;
       }
-      if (input.isDown('ArrowUp') && !handleActions._up) state.titleMenu = Math.max(0, state.titleMenu - 1);
-      if (input.isDown('ArrowDown') && !handleActions._down) {
+      if (bits & ACTION_UP) state.titleMenu = Math.max(0, state.titleMenu - 1);
+      if (bits & ACTION_DOWN) {
         const n = (state.saveExists ? 3 : 2);
         state.titleMenu = Math.min(n - 1, state.titleMenu + 1);
       }
-      handleActions._up = input.isDown('ArrowUp');
-      handleActions._down = input.isDown('ArrowDown');
       if (clicked) {
         const hit = menuClick(mx, my);
         if (hit >= 0) {
@@ -492,10 +499,8 @@ function runGame() {
         }
         return;
       }
-      if (input.isDown('ArrowUp') && !handleActions._up) state.pauseMenu = Math.max(0, state.pauseMenu - 1);
-      if (input.isDown('ArrowDown') && !handleActions._down) state.pauseMenu = Math.min(2, state.pauseMenu + 1);
-      handleActions._up = input.isDown('ArrowUp');
-      handleActions._down = input.isDown('ArrowDown');
+      if (bits & ACTION_UP) state.pauseMenu = Math.max(0, state.pauseMenu - 1);
+      if (bits & ACTION_DOWN) state.pauseMenu = Math.min(2, state.pauseMenu + 1);
       if (clicked) {
         const hit = menuClick(mx, my);
         if (hit === 0) state.screen = 'play';
@@ -515,7 +520,8 @@ function runGame() {
     if (bits & ACTION_PAUSE) {
       state.screen = 'paused';
       state.pauseMenu = 0;
-      announce('Paused.');
+      saveGame();
+      announce('Paused. Progress saved.');
       return;
     }
     if (bits & ACTION_INTERACT) {
@@ -534,18 +540,18 @@ function runGame() {
     if (input.isDown('Digit1')) state.player.weapon = 'fists';
     if (input.isDown('Digit2')) state.player.weapon = 'pistol';
     if (input.isDown('Digit3') && state.hasSmg) state.player.weapon = 'smg';
-    // Space edge = punch (fists) when on foot.
-    const space = input.isDown('Space');
-    if (space && !prevSpace && !state.player.inCar && state.player.weapon === 'fists') {
+    // Space = punch (fists) when on foot. Uses the sticky ACTION_PUNCH bit:
+    // a quick tap can fall between frames, and sampling the held key would miss it.
+    if (bits & ACTION_PUNCH && !state.player.inCar && state.player.weapon === 'fists') {
       const p = state.player;
       const cam = state.camera;
       const wx = cam.x + input.mouse.x - VIEW_W / 2;
       const wy = cam.y + input.mouse.y - VIEW_H / 2;
       combat.fireWeapon(state, p, wx, wy);
     }
-    prevSpace = space;
-    // Mouse held = shoot toward the cursor (on foot only).
-    if (input.mouse.down && !state.player.inCar) {
+    // Mouse held = shoot toward the cursor. Works on foot and from a car
+    // (drive-by): the bullet leaves from Rook's position toward the mouse.
+    if (input.mouse.down) {
       const p = state.player;
       const cam = state.camera;
       const wx = cam.x + input.mouse.x - VIEW_W / 2;
@@ -587,7 +593,8 @@ function runGame() {
     if (document.hidden && state.screen === 'play') {
       state.screen = 'paused';
       state.pauseMenu = 0;
-      announce('Paused.');
+      saveGame();
+      announce('Paused. Progress saved.');
     }
   });
 
