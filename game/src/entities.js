@@ -113,7 +113,12 @@ export function spawnCop(G, kind) {
 }
 
 export function addHeat(G, amount, reason) {
-  G.heat = clamp(G.heat + amount, 0, 100);
+  // A story mission that demands sustained shooting must not summon its
+  // own 4-5 star death spiral: while a mission is active, heat caps at
+  // 45 (3 stars) — cops still join the fight, but the swarm stays fair.
+  // Free-roam heat is uncapped.
+  const cap = G.mission ? 45 : 100;
+  G.heat = clamp(G.heat + amount, 0, cap);
   G.lastCrime = G.time;
   if (reason) G.crimeFlash = reason;
 }
