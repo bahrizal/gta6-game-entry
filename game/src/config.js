@@ -60,7 +60,7 @@ export const TUNING = {
   wantedDecay: 1.6,
   heatPerCarTheft: 14,
   heatPerPedHit: 18,
-  heatPerShot: 0.5,
+  heatPerShot: 0.25, // a sustained shootout builds heat, but the cops join late, not mid-fight
   heatPerCopKill: 30,
   heatPerKill: 12,
   bustedTime: 2.5,
