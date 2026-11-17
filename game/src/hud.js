@@ -33,7 +33,7 @@ export function drawHUD(ctx, G) {
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   ctx.font = 'bold 20px system-ui, sans-serif';
-  ctx.fillStyle = 'rgba(0,0,0,0.82)';
+  ctx.fillStyle = 'rgba(0,0,0,0.92)';
   roundRect(ctx, 12, 12, 250, 64, 10);
   ctx.fill();
   // Health bar.
@@ -59,7 +59,7 @@ export function drawHUD(ctx, G) {
 
   // Top-right: clock + district.
   ctx.textAlign = 'right';
-  ctx.fillStyle = 'rgba(0,0,0,0.82)';
+  ctx.fillStyle = 'rgba(0,0,0,0.92)';
   roundRect(ctx, 1010, 12, 258, 44, 10);
   ctx.fill();
   ctx.fillStyle = '#fff';
@@ -85,7 +85,7 @@ export function drawHUD(ctx, G) {
 
   // Bottom-left: weapon + ammo, or speedometer while driving.
   ctx.textAlign = 'left';
-  ctx.fillStyle = 'rgba(0,0,0,0.82)';
+  ctx.fillStyle = 'rgba(0,0,0,0.92)';
   roundRect(ctx, 12, 648, 220, 60, 10);
   ctx.fill();
   const wname = p.weapon === 'fists' ? 'Fists' : p.weapon === 'pistol' ? 'Pistol' : 'SMG';
@@ -97,7 +97,7 @@ export function drawHUD(ctx, G) {
   if (p.weapon === 'fists') ctx.fillText('Space to punch · E to enter car', 24, 692);
   else ctx.fillText('Ammo ' + (p.ammo[p.weapon] ?? 0) + ' · R reload · 1/2/3 switch', 24, 692);
   if (p.inCar) {
-    ctx.fillStyle = 'rgba(0,0,0,0.82)';
+    ctx.fillStyle = 'rgba(0,0,0,0.92)';
     roundRect(ctx, 244, 648, 130, 60, 10);
     ctx.fill();
     ctx.fillStyle = '#fff';
