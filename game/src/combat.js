@@ -112,6 +112,9 @@ export function spawnEnemy(G, x, y, kind) {
     kind: kind || 'goon', state: 'guard',
     fireTimer: range(G.rng, 0.5, 1.5), moveTimer: 0,
     speed: 120, dead: false, target: null,
+    // Fixed slide direction while advancing: an oscillating strafe averages
+    // to zero and leaves the enemy jittering against a wall forever.
+    strafeDir: G.rng() < 0.5 ? -1 : 1,
   };
   G.enemies.push(e);
   return e;
@@ -223,7 +226,7 @@ export function updateEnemies(G, dt) {
       const los = hasLineOfSight(G, e.x, e.y, p.x, p.y);
       if (!los || d > 260) {
         // Advance (and slide around the building) until there is a shot.
-        const strafe = Math.sin(G.time * 1.3 + e.x) * 0.5;
+        const strafe = (e.strafeDir || 1) * 0.5;
         const mx = Math.cos(a) * 0.9 + Math.cos(a + Math.PI / 2) * strafe * 0.4;
         const my = Math.sin(a) * 0.9 + Math.sin(a + Math.PI / 2) * strafe * 0.4;
         const pos = resolveCircle(G.city.buildings, e.x + mx * e.speed * dt, e.y + my * e.speed * dt, 13);
