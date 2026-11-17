@@ -413,16 +413,16 @@ export function updateMission(G, dt) {
         if (s.convoy.length > 0) setWaypoint(G, s.convoy.find((c) => !c.dead)?.x || 0, s.convoy.find((c) => !c.dead)?.y || 0, 'Convoy');
         if (alive === 0) {
           m.stage = 1;
-          s.total = 9;
+          s.total = 7;
           s.kills = 0;
           // Arm the player on the warehouse approach before the last fight.
           spawnPickup(G, 860, 2260, 'weapon-smg', 0);
           spawnPickup(G, 900, 2260, 'ammo-smg', 60);
           spawnPickup(G, 820, 2280, 'health', 25);
           // Yard around the warehouse, never inside the building itself.
-          const spots = [[720, 2260], [960, 2260], [700, 2040], [980, 2040], [840, 1960], [680, 2200], [1000, 2200], [760, 2320], [840, 2320]];
+          const spots = [[720, 2260], [960, 2260], [840, 1960], [680, 2200], [1000, 2200], [760, 2320], [840, 2320]];
           for (let i = 0; i < spots.length; i++) {
-            spawnEnemy(G, spots[i][0], spots[i][1], i === 8 ? 'boss' : 'goon');
+            spawnEnemy(G, spots[i][0], spots[i][1], i === 6 ? 'boss' : 'goon');
           }
           G.message = 'The King is in the warehouse. End this.';
           G.messageTimer = 3;
