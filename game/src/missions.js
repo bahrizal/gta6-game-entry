@@ -33,7 +33,11 @@ export function startMission(G, index) {
   G.missionCard = { title: def.title, act: def.act, text: def.briefing, timer: 5 };
   G.audio.sfx('sting');
   // Mission-specific setup that only needs to happen once.
-  if (index === 2) spawnPickup(G, 900, 2050, 'weapon-smg', 0);
+  if (index === 2) {
+    // Arm the player on the approach to the warehouse, not inside it.
+    spawnPickup(G, 860, 2260, 'weapon-smg', 0);
+    spawnPickup(G, 820, 2280, 'health', 25);
+  }
   if (index === 1) spawnPickup(G, 2100, 1350, 'weapon-pistol', 0);
   if (index === 6) spawnPickup(G, 2280, 1380, 'health', 50);
 }

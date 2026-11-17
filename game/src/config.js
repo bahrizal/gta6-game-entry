@@ -60,7 +60,7 @@ export const TUNING = {
   wantedDecay: 1.6,
   heatPerCarTheft: 14,
   heatPerPedHit: 18,
-  heatPerShot: 2.5,
+  heatPerShot: 0.8,
   heatPerCopKill: 30,
   heatPerKill: 12,
   bustedTime: 1.6,

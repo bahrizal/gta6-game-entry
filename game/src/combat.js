@@ -219,12 +219,12 @@ export function updateEnemies(G, dt) {
         e.y = pos.y;
       }
       if (d < 460 && e.fireTimer <= 0) {
-        e.fireTimer = e.kind === 'boss' ? 0.7 : 1.1;
-        const spread = range(G.rng, -0.08, 0.08);
+        e.fireTimer = e.kind === 'boss' ? 1.1 : 1.7;
+        const spread = range(G.rng, -0.16, 0.16);
         G.bullets.push({
           x: e.x + Math.cos(a) * 24, y: e.y + Math.sin(a) * 24,
           vx: Math.cos(a + spread) * 760, vy: Math.sin(a + spread) * 760,
-          life: 0.6, damage: e.kind === 'boss' ? 12 : 8, from: 'enemy',
+          life: 0.6, damage: e.kind === 'boss' ? 9 : 6, from: 'enemy',
         });
         burst(G, e.x + Math.cos(a) * 28, e.y + Math.sin(a) * 28, 2, '#ffd24d', 100, 0.1);
         G.audio.sfx('shotEnemy');
