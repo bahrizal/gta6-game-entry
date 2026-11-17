@@ -292,8 +292,14 @@ export function updateMission(G, dt) {
         if (s.driver && !p.inCar && dist(p.x, p.y, s.driver.x, s.driver.y) < 42) {
           completeMission(G);
         }
+        // The driver only gets away if he stays out of reach for a while —
+        // a single frame at long range (he just stepped out of the car)
+        // must not fail the job on the spot.
         if (s.driver && dist(p.x, p.y, s.driver.x, s.driver.y) > 900) {
-          failMission(G, 'The informant got away.');
+          s.driverLost = (s.driverLost || 0) + dt;
+          if (s.driverLost > 5) failMission(G, 'The informant got away.');
+        } else {
+          s.driverLost = 0;
         }
       }
       break;
