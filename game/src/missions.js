@@ -162,7 +162,8 @@ export function updateMission(G, dt) {
           s.total = 5;
           s.kills = 0;
           // Yard around the warehouse, never inside the building itself.
-          const spots = [[720, 2260], [960, 2260], [700, 2040], [980, 2040], [840, 2320]];
+          // South and side spots: clear lines of fire from the approach.
+          const spots = [[720, 2260], [960, 2260], [680, 2140], [1000, 2140], [840, 2320]];
           for (const [x, y] of spots) spawnEnemy(G, x, y, 'goon');
         }
       } else {

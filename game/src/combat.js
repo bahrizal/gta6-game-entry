@@ -194,6 +194,21 @@ export function updateBullets(G, dt) {
   }
 }
 
+// Line of sight: sample the segment every 30px; a building in the way
+// blocks the shot. Enemies reposition until they can see the player,
+// so a fight never stalls with both sides shooting at a wall.
+function hasLineOfSight(G, x0, y0, x1, y1) {
+  const d = dist(x0, y0, x1, y1);
+  const steps = Math.max(1, Math.ceil(d / 30));
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps;
+    if (collidesBuilding(G.city.buildings, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, 2)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function updateEnemies(G, dt) {
   const p = G.player;
   for (const e of G.enemies) {
@@ -205,8 +220,9 @@ export function updateEnemies(G, dt) {
     e.angle = a;
     if (d < 520) {
       e.state = 'fight';
-      if (d > 260) {
-        // Advance, strafing a little.
+      const los = hasLineOfSight(G, e.x, e.y, p.x, p.y);
+      if (!los || d > 260) {
+        // Advance (and slide around the building) until there is a shot.
         const strafe = Math.sin(G.time * 1.3 + e.x) * 0.5;
         const mx = Math.cos(a) * 0.9 + Math.cos(a + Math.PI / 2) * strafe * 0.4;
         const my = Math.sin(a) * 0.9 + Math.sin(a + Math.PI / 2) * strafe * 0.4;
@@ -220,7 +236,7 @@ export function updateEnemies(G, dt) {
         e.x = pos.x;
         e.y = pos.y;
       }
-      if (d < 460 && e.fireTimer <= 0) {
+      if (los && d < 460 && e.fireTimer <= 0) {
         e.fireTimer = e.kind === 'boss' ? 1.1 : 1.7;
         const spread = range(G.rng, -0.16, 0.16);
         G.bullets.push({
