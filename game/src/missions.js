@@ -244,13 +244,14 @@ export function updateMission(G, dt) {
           m.stage = 1;
           // Stop south of the motel, on open ground — never inside it.
           t.ai.loop = [[3000, 2280]];
+          t.ai.wp = 0; // the new loop has one point; reset the index
           t.speed = 150;
           G.message = 'He stopped at the Motel. Confront him.';
           G.messageTimer = 3;
         }
       } else {
         const t = s.target;
-        const wp = t.ai.loop[t.ai.wp];
+        const wp = t.ai.loop[t.ai.wp] || t.ai.loop[0];
         const a = angleTo(t.x, t.y, wp[0], wp[1]);
         const diff = Math.atan2(Math.sin(a - t.angle), Math.cos(a - t.angle));
         t.angle += clamp(diff, -1.8 * dt, 1.8 * dt);

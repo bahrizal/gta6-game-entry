@@ -465,7 +465,14 @@ function frame(now) {
   acc += elapsed;
   let steps = 0;
   while (acc >= STEP && steps < 5) {
-    update(STEP);
+    try {
+      update(STEP);
+    } catch (e) {
+      // One bad update must never freeze the game: log it and keep
+      // running so the player can keep playing (and the error stays
+      // visible in the console for debugging).
+      console.error('update failed:', e);
+    }
     input.endStep();
     acc -= STEP;
     steps++;
